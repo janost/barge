@@ -46,3 +46,26 @@ func Exec(cluster, taskID, container, command string) error {
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
+
+// ExecSSM replaces the current process with `aws ssm start-session`.
+func ExecSSM(instanceID string) error {
+	awsBin, err := osexec.LookPath("aws")
+	if err != nil {
+		return fmt.Errorf("aws CLI not found: %w", err)
+	}
+
+	args := []string{
+		"aws", "ssm", "start-session",
+		"--target", instanceID,
+	}
+
+	if runtime.GOOS != "windows" {
+		return syscall.Exec(awsBin, args, os.Environ())
+	}
+
+	cmd := osexec.Command(awsBin, args[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}

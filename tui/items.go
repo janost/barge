@@ -2,9 +2,49 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	bargeaws "github.com/MutuallyAssuredDeployment/barge/aws"
 )
+
+// ModeItem implements list.Item for target type selection (ECS/EC2).
+type ModeItem struct {
+	Mode string // "ecs" or "ec2"
+	Label string
+	Desc  string
+}
+
+func (i ModeItem) Title() string       { return i.Label }
+func (i ModeItem) Description() string { return i.Desc }
+func (i ModeItem) FilterValue() string { return i.Label }
+
+// InstanceItem implements list.Item for EC2 instances.
+type InstanceItem struct {
+	Info bargeaws.InstanceInfo
+}
+
+func (i InstanceItem) Title() string {
+	if i.Info.Name != "" {
+		return i.Info.Name
+	}
+	return i.Info.ID
+}
+func (i InstanceItem) Description() string {
+	parts := []string{i.Info.ID}
+	if i.Info.Platform != "" {
+		parts = append(parts, i.Info.Platform)
+	}
+	if i.Info.IPAddress != "" {
+		parts = append(parts, i.Info.IPAddress)
+	}
+	return strings.Join(parts, " | ")
+}
+func (i InstanceItem) FilterValue() string {
+	if i.Info.Name != "" {
+		return i.Info.Name + " " + i.Info.ID
+	}
+	return i.Info.ID
+}
 
 // ClusterItem implements list.Item for ECS clusters.
 type ClusterItem struct {

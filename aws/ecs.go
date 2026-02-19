@@ -9,12 +9,16 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
 )
 
 type Client struct {
 	ecs *ecs.Client
+	ssm *ssm.Client
+	ec2 *ec2.Client
 }
 
 type ServiceInfo struct {
@@ -55,7 +59,11 @@ func NewClient(ctx context.Context, profile, region string) (*Client, error) {
 		return nil, fmt.Errorf("loading AWS config: %w", err)
 	}
 
-	return &Client{ecs: ecs.NewFromConfig(cfg)}, nil
+	return &Client{
+		ecs: ecs.NewFromConfig(cfg),
+		ssm: ssm.NewFromConfig(cfg),
+		ec2: ec2.NewFromConfig(cfg),
+	}, nil
 }
 
 func (c *Client) ListClusters(ctx context.Context) ([]string, error) {

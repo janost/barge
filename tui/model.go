@@ -15,19 +15,23 @@ import (
 type step int
 
 const (
-	stepCluster step = iota
+	stepMode step = iota
+	stepCluster
 	stepService
 	stepTask
 	stepContainer
+	stepInstance
 	stepDone
 )
 
 // Selection holds the user's choices from the TUI drill-down.
 type Selection struct {
-	Cluster   string
-	Service   string
-	Task      string
-	Container string
+	Mode       string // "ecs" or "ec2"
+	Cluster    string
+	Service    string
+	Task       string
+	Container  string
+	InstanceID string
 }
 
 // Model is the root Bubble Tea model for the barge TUI.
@@ -37,10 +41,11 @@ type Model struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 
-	step      step
-	list      list.Model
-	spinner   spinner.Model
-	selection Selection
+	step       step
+	list       list.Model
+	spinner    spinner.Model
+	selection  Selection
+	modePreset bool // true when mode was set by caller (skip mode selection, back from first step quits)
 
 	loading    bool
 	err        error
@@ -54,36 +59,64 @@ type Model struct {
 	services   []bargeaws.ServiceInfo
 	tasks      []bargeaws.TaskInfo
 	containers []bargeaws.ContainerInfo
+	instances  []bargeaws.InstanceInfo
 }
 
 // Messages returned by async commands.
 type clustersMsg struct{ clusters []string }
 type servicesMsg struct{ services []bargeaws.ServiceInfo }
 type tasksMsg struct{ tasks []bargeaws.TaskInfo }
+type instancesMsg struct{ instances []bargeaws.InstanceInfo }
 type errMsg struct{ err error }
 
-func NewModel(client *bargeaws.Client, command string) Model {
+// NewModel creates a new TUI model.
+// mode: "" = show mode selection, "ecs" = skip to clusters, "ec2" = skip to instances.
+func NewModel(client *bargeaws.Client, command, mode string) Model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	return Model{
+	m := Model{
 		client:  client,
 		command: command,
 		ctx:     ctx,
 		cancel:  cancel,
-		step:    stepCluster,
 		spinner: s,
-		loading: true,
 		width:   80,
 		height:  24,
 	}
+
+	switch mode {
+	case "ecs":
+		m.modePreset = true
+		m.selection.Mode = "ecs"
+		m.step = stepCluster
+		m.loading = true
+	case "ec2":
+		m.modePreset = true
+		m.selection.Mode = "ec2"
+		m.step = stepInstance
+		m.loading = true
+	default:
+		m.step = stepMode
+		m.loading = false
+		m.list = m.newModeList()
+	}
+
+	return m
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, m.fetchClusters())
+	switch m.step {
+	case stepCluster:
+		return tea.Batch(m.spinner.Tick, m.fetchClusters())
+	case stepInstance:
+		return tea.Batch(m.spinner.Tick, m.fetchInstances())
+	default:
+		return nil
+	}
 }
 
 func (m Model) Cancelled() bool     { return m.cancelled }
@@ -177,6 +210,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.list = m.newTaskList()
 		return m, nil
 
+	case instancesMsg:
+		m.instances = msg.instances
+		m.loading = false
+		m.autoSelect = ""
+		if len(msg.instances) == 0 {
+			m.err = fmt.Errorf("no SSM-managed EC2 instances found online")
+			return m, nil
+		}
+		if len(msg.instances) == 1 {
+			inst := msg.instances[0]
+			label := inst.ID
+			if inst.Name != "" {
+				label = inst.Name
+			}
+			m.autoSelect = fmt.Sprintf("Auto-selected instance: %s", label)
+			m.selection.InstanceID = inst.ID
+			m.step = stepDone
+			return m, tea.Quit
+		}
+		m.list = m.newInstanceList()
+		return m, nil
+
 	case errMsg:
 		m.loading = false
 		m.err = msg.err
@@ -225,6 +280,8 @@ func (m Model) View() string {
 			label = "tasks"
 		case stepContainer:
 			label = "containers"
+		case stepInstance:
+			label = "instances"
 		}
 		b.WriteString(fmt.Sprintf("  %s Loading %s...\n", m.spinner.View(), label))
 		return b.String()
@@ -243,14 +300,38 @@ func (m Model) goBack() (Model, tea.Cmd) {
 
 	for {
 		switch m.step {
-		case stepCluster:
+		case stepMode:
 			m.cancelled = true
 			m.cancel()
 			return m, tea.Quit
 
+		case stepCluster:
+			m.selection.Cluster = ""
+			if m.modePreset {
+				m.cancelled = true
+				m.cancel()
+				return m, tea.Quit
+			}
+			m.step = stepMode
+			m.selection.Mode = ""
+			m.list = m.newModeList()
+			return m, nil
+
+		case stepInstance:
+			m.selection.InstanceID = ""
+			if m.modePreset {
+				m.cancelled = true
+				m.cancel()
+				return m, tea.Quit
+			}
+			m.step = stepMode
+			m.selection.Mode = ""
+			m.list = m.newModeList()
+			return m, nil
+
 		case stepService:
 			m.step = stepCluster
-			m.selection.Cluster = ""
+			m.selection.Service = ""
 			if len(m.clusters) == 1 {
 				continue // skip auto-selected, keep going back
 			}
@@ -259,7 +340,7 @@ func (m Model) goBack() (Model, tea.Cmd) {
 
 		case stepTask:
 			m.step = stepService
-			m.selection.Service = ""
+			m.selection.Task = ""
 			if len(m.services) == 1 {
 				continue
 			}
@@ -268,7 +349,7 @@ func (m Model) goBack() (Model, tea.Cmd) {
 
 		case stepContainer:
 			m.step = stepTask
-			m.selection.Task = ""
+			m.selection.Container = ""
 			if len(m.tasks) == 1 {
 				continue
 			}
@@ -288,6 +369,19 @@ func (m Model) selectCurrent() (Model, tea.Cmd) {
 	}
 
 	switch m.step {
+	case stepMode:
+		item := selected.(ModeItem)
+		m.selection.Mode = item.Mode
+		if item.Mode == "ec2" {
+			m.step = stepInstance
+			m.loading = true
+			return m, tea.Batch(m.spinner.Tick, m.fetchInstances())
+		}
+		// ECS path
+		m.step = stepCluster
+		m.loading = true
+		return m, tea.Batch(m.spinner.Tick, m.fetchClusters())
+
 	case stepCluster:
 		item := selected.(ClusterItem)
 		m.selection.Cluster = item.Name
@@ -311,6 +405,12 @@ func (m Model) selectCurrent() (Model, tea.Cmd) {
 	case stepContainer:
 		item := selected.(ContainerItem)
 		m.selection.Container = item.Info.Name
+		m.step = stepDone
+		return m, tea.Quit
+
+	case stepInstance:
+		item := selected.(InstanceItem)
+		m.selection.InstanceID = item.Info.ID
 		m.step = stepDone
 		return m, tea.Quit
 	}
@@ -346,6 +446,19 @@ func (m Model) advanceToContainers(containers []bargeaws.ContainerInfo) (Model, 
 }
 
 // --- list constructors ---
+
+func (m Model) newModeList() list.Model {
+	items := []list.Item{
+		ModeItem{Mode: "ecs", Label: "ECS Container", Desc: "Connect to an ECS Fargate/EC2 task container"},
+		ModeItem{Mode: "ec2", Label: "EC2 Instance", Desc: "Connect to an EC2 instance via SSM Session Manager"},
+	}
+	l := list.New(items, list.NewDefaultDelegate(), m.width, m.height-4)
+	l.Title = "Select Target Type"
+	l.SetShowStatusBar(false)
+	l.SetFilteringEnabled(false)
+	l.Styles.Title = titleStyle
+	return l
+}
 
 func (m Model) newClusterList() list.Model {
 	items := make([]list.Item, len(m.clusters))
@@ -399,6 +512,19 @@ func (m Model) newContainerList(containers []bargeaws.ContainerInfo) list.Model 
 	return l
 }
 
+func (m Model) newInstanceList() list.Model {
+	items := make([]list.Item, len(m.instances))
+	for i, inst := range m.instances {
+		items[i] = InstanceItem{Info: inst}
+	}
+	l := list.New(items, list.NewDefaultDelegate(), m.width, m.height-4)
+	l.Title = "Select Instance"
+	l.SetShowStatusBar(true)
+	l.SetFilteringEnabled(true)
+	l.Styles.Title = titleStyle
+	return l
+}
+
 // --- async commands ---
 
 func (m Model) fetchClusters() tea.Cmd {
@@ -440,11 +566,28 @@ func (m Model) fetchTasks() tea.Cmd {
 	}
 }
 
+func (m Model) fetchInstances() tea.Cmd {
+	ctx := m.ctx
+	client := m.client
+	return func() tea.Msg {
+		instances, err := client.ListInstances(ctx)
+		if err != nil {
+			return errMsg{err: err}
+		}
+		return instancesMsg{instances: instances}
+	}
+}
+
 // --- breadcrumb ---
 
 func (m Model) renderBreadcrumb() string {
 	parts := []string{"barge"}
 
+	if m.selection.Mode != "" {
+		parts = append(parts, m.selection.Mode)
+	}
+
+	// ECS path
 	if m.selection.Cluster != "" {
 		parts = append(parts, m.selection.Cluster)
 	}
@@ -456,6 +599,11 @@ func (m Model) renderBreadcrumb() string {
 	}
 	if m.selection.Container != "" {
 		parts = append(parts, m.selection.Container)
+	}
+
+	// EC2 path
+	if m.selection.InstanceID != "" {
+		parts = append(parts, m.selection.InstanceID)
 	}
 
 	if len(parts) == 1 {

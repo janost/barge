@@ -137,7 +137,7 @@ func resolveTargetTUI() (cpTarget, error) {
 		return cpTarget{}, err
 	}
 
-	model := tui.NewModel(client, "") // command not used for cp
+	model := tui.NewModel(client, "", "ecs") // cp is ECS-only, skip mode selection
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	finalModel, err := p.Run()
 	if err != nil {

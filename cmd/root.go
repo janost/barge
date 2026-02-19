@@ -21,6 +21,7 @@ var (
 	task      string
 	container string
 	command   string
+	instance  string
 )
 
 func SetVersion(v string) {
@@ -30,8 +31,8 @@ func SetVersion(v string) {
 
 var rootCmd = &cobra.Command{
 	Use:     "barge",
-	Short:   "Open a shell in a running AWS ECS task",
-	Long:    "Barge simplifies connecting to running AWS ECS tasks by providing an interactive drill-down selection or direct CLI access.",
+	Short:   "Open a shell in a running AWS ECS task or EC2 instance",
+	Long:    "Barge simplifies connecting to running AWS ECS tasks and EC2 instances via SSM by providing an interactive drill-down selection or direct CLI access.",
 	Version: version,
 	RunE:    runRoot,
 }
@@ -44,6 +45,13 @@ func init() {
 	rootCmd.Flags().StringVarP(&task, "task", "t", "", "ECS task ID (optional, defaults to most recent)")
 	rootCmd.Flags().StringVarP(&container, "container", "C", "", "Container name (optional, auto-selected if unambiguous)")
 	rootCmd.Flags().StringVarP(&command, "command", "x", "/bin/sh", "Command to execute in the container")
+	rootCmd.Flags().StringVarP(&instance, "instance", "i", "", "EC2 instance ID for direct SSM session (mutually exclusive with ECS flags)")
+
+	rootCmd.MarkFlagsMutuallyExclusive("instance", "cluster")
+	rootCmd.MarkFlagsMutuallyExclusive("instance", "service")
+	rootCmd.MarkFlagsMutuallyExclusive("instance", "task")
+	rootCmd.MarkFlagsMutuallyExclusive("instance", "container")
+	rootCmd.MarkFlagsMutuallyExclusive("instance", "command")
 }
 
 func Execute() error {
@@ -55,11 +63,20 @@ func runRoot(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if instance != "" {
+		return runDirectSSM()
+	}
+
 	if cluster != "" && service != "" {
 		return runDirect()
 	}
 
 	return runTUI()
+}
+
+func runDirectSSM() error {
+	fmt.Fprintf(os.Stderr, "Connecting to EC2 instance: %s\n", instance)
+	return exec.ExecSSM(instance)
 }
 
 func runDirect() error {
@@ -104,7 +121,7 @@ func runTUI() error {
 		return err
 	}
 
-	model := tui.NewModel(client, command)
+	model := tui.NewModel(client, command, "")
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	finalModel, err := p.Run()
 	if err != nil {
@@ -120,6 +137,16 @@ func runTUI() error {
 	}
 
 	sel := m.Selection()
+
+	if sel.Mode == "ec2" {
+		if sel.InstanceID == "" {
+			return nil
+		}
+		fmt.Fprintf(os.Stderr, "Connecting to EC2 instance: %s\n", sel.InstanceID)
+		return exec.ExecSSM(sel.InstanceID)
+	}
+
+	// ECS path
 	if sel.Cluster == "" {
 		return nil
 	}
