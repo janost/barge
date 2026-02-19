@@ -43,7 +43,7 @@ func LoadHistory() ([]HistoryEntry, error) {
 func AppendHistory(entry HistoryEntry) error {
 	entries, err := LoadHistory()
 	if err != nil {
-		entries = nil
+		entries = nil // corrupt or unreadable file — start fresh
 	}
 
 	entries = append(entries, entry)
@@ -72,5 +72,5 @@ func writeHistory(entries []HistoryEntry) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(historyPath(), data, 0o644)
+	return os.WriteFile(filepath.Join(dir, "history.json"), data, 0o644)
 }
