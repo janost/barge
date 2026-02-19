@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	bargeaws "github.com/MutuallyAssuredDeployment/barge/aws"
+	"github.com/MutuallyAssuredDeployment/barge/config"
 	"github.com/MutuallyAssuredDeployment/barge/exec"
 	"github.com/MutuallyAssuredDeployment/barge/tui"
 	tea "github.com/charmbracelet/bubbletea"
@@ -76,6 +78,11 @@ func runRoot(cmd *cobra.Command, args []string) error {
 
 func runDirectSSM() error {
 	fmt.Fprintf(os.Stderr, "Connecting to EC2 instance: %s\n", instance)
+	_ = config.AppendHistory(config.HistoryEntry{
+		Mode:       "ec2",
+		InstanceID: instance,
+		Timestamp:  time.Now(),
+	})
 	return exec.ExecSSM(instance)
 }
 
@@ -110,6 +117,15 @@ func runDirect() error {
 	fmt.Fprintf(os.Stderr, "Connecting: %s > %s > %s > %s\n", cluster, service, selectedTask.ID, selectedContainer.Name)
 	fmt.Fprintf(os.Stderr, "Command: %s\n", command)
 
+	_ = config.AppendHistory(config.HistoryEntry{
+		Mode:      "ecs",
+		Cluster:   cluster,
+		Service:   service,
+		Task:      selectedTask.ID,
+		Container: selectedContainer.Name,
+		Command:   command,
+		Timestamp: time.Now(),
+	})
 	return exec.Exec(cluster, selectedTask.ID, selectedContainer.Name, command)
 }
 
@@ -143,6 +159,11 @@ func runTUI() error {
 			return nil
 		}
 		fmt.Fprintf(os.Stderr, "Connecting to EC2 instance: %s\n", sel.InstanceID)
+		_ = config.AppendHistory(config.HistoryEntry{
+			Mode:       "ec2",
+			InstanceID: sel.InstanceID,
+			Timestamp:  time.Now(),
+		})
 		return exec.ExecSSM(sel.InstanceID)
 	}
 
@@ -154,5 +175,14 @@ func runTUI() error {
 	fmt.Fprintf(os.Stderr, "Connecting: %s > %s > %s > %s\n", sel.Cluster, sel.Service, sel.Task, sel.Container)
 	fmt.Fprintf(os.Stderr, "Command: %s\n", command)
 
+	_ = config.AppendHistory(config.HistoryEntry{
+		Mode:      "ecs",
+		Cluster:   sel.Cluster,
+		Service:   sel.Service,
+		Task:      sel.Task,
+		Container: sel.Container,
+		Command:   command,
+		Timestamp: time.Now(),
+	})
 	return exec.Exec(sel.Cluster, sel.Task, sel.Container, command)
 }
