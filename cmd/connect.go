@@ -20,6 +20,7 @@ var connectCmd = &cobra.Command{
 }
 
 func init() {
+	connectCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the AWS CLI command instead of executing")
 	rootCmd.AddCommand(connectCmd)
 }
 
@@ -40,6 +41,10 @@ func runConnect(cmd *cobra.Command, args []string) error {
 	}
 
 	if bm.Mode == "ec2" {
+		if dryRun {
+			fmt.Fprintf(os.Stdout, "aws ssm start-session --target %s\n", bm.InstanceID)
+			return nil
+		}
 		_ = config.AppendHistory(config.HistoryEntry{
 			Mode:       "ec2",
 			InstanceID: bm.InstanceID,
@@ -78,6 +83,12 @@ func runConnect(cmd *cobra.Command, args []string) error {
 	cmd2 := bm.Command
 	if cmd2 == "" {
 		cmd2 = "/bin/sh"
+	}
+
+	if dryRun {
+		fmt.Fprintf(os.Stdout, "aws ecs execute-command --cluster %s --task %s --container %s --command %s --interactive\n",
+			bm.Cluster, selectedTask.ID, containerName, cmd2)
+		return nil
 	}
 
 	_ = config.AppendHistory(config.HistoryEntry{

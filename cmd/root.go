@@ -24,6 +24,7 @@ var (
 	container string
 	command   string
 	instance  string
+	dryRun    bool
 )
 
 func SetVersion(v string) {
@@ -48,6 +49,7 @@ func init() {
 	rootCmd.Flags().StringVarP(&container, "container", "C", "", "Container name (optional, auto-selected if unambiguous)")
 	rootCmd.Flags().StringVarP(&command, "command", "x", "/bin/sh", "Command to execute in the container")
 	rootCmd.Flags().StringVarP(&instance, "instance", "i", "", "EC2 instance ID for direct SSM session (mutually exclusive with ECS flags)")
+	rootCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the AWS CLI command instead of executing")
 
 	rootCmd.MarkFlagsMutuallyExclusive("instance", "cluster")
 	rootCmd.MarkFlagsMutuallyExclusive("instance", "service")
@@ -77,6 +79,10 @@ func runRoot(cmd *cobra.Command, args []string) error {
 }
 
 func runDirectSSM() error {
+	if dryRun {
+		fmt.Fprintf(os.Stdout, "aws ssm start-session --target %s\n", instance)
+		return nil
+	}
 	fmt.Fprintf(os.Stderr, "Connecting to EC2 instance: %s\n", instance)
 	_ = config.AppendHistory(config.HistoryEntry{
 		Mode:       "ec2",
@@ -112,6 +118,12 @@ func runDirect() error {
 	selectedContainer, err := bargeaws.ResolveContainer(selectedTask.Containers, container)
 	if err != nil {
 		return err
+	}
+
+	if dryRun {
+		fmt.Fprintf(os.Stdout, "aws ecs execute-command --cluster %s --task %s --container %s --command %s --interactive\n",
+			cluster, selectedTask.ID, selectedContainer.Name, command)
+		return nil
 	}
 
 	fmt.Fprintf(os.Stderr, "Connecting: %s > %s > %s > %s\n", cluster, service, selectedTask.ID, selectedContainer.Name)
@@ -158,6 +170,10 @@ func runTUI() error {
 		if sel.InstanceID == "" {
 			return nil
 		}
+		if dryRun {
+			fmt.Fprintf(os.Stdout, "aws ssm start-session --target %s\n", sel.InstanceID)
+			return nil
+		}
 		fmt.Fprintf(os.Stderr, "Connecting to EC2 instance: %s\n", sel.InstanceID)
 		_ = config.AppendHistory(config.HistoryEntry{
 			Mode:       "ec2",
@@ -169,6 +185,12 @@ func runTUI() error {
 
 	// ECS path
 	if sel.Cluster == "" {
+		return nil
+	}
+
+	if dryRun {
+		fmt.Fprintf(os.Stdout, "aws ecs execute-command --cluster %s --task %s --container %s --command %s --interactive\n",
+			sel.Cluster, sel.Task, sel.Container, command)
 		return nil
 	}
 
