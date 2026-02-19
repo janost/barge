@@ -381,6 +381,53 @@ func (c *Client) DescribeServiceDetail(ctx context.Context, cluster, service str
 	}, nil
 }
 
+type StoppedTaskInfo struct {
+	ID         string
+	StopReason string
+	StoppedAt  time.Time
+}
+
+func (c *Client) ListStoppedTasks(ctx context.Context, cluster, service string) ([]StoppedTaskInfo, error) {
+	out, err := c.ecs.ListTasks(ctx, &ecs.ListTasksInput{
+		Cluster:       aws.String(cluster),
+		ServiceName:   aws.String(service),
+		DesiredStatus: ecstypes.DesiredStatusStopped,
+		MaxResults:    aws.Int32(10),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(out.TaskArns) == 0 {
+		return nil, nil
+	}
+
+	desc, err := c.ecs.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+		Cluster: aws.String(cluster),
+		Tasks:   out.TaskArns,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	cutoff := time.Now().Add(-24 * time.Hour)
+	var stopped []StoppedTaskInfo
+	for _, t := range desc.Tasks {
+		var stoppedAt time.Time
+		if t.StoppedAt != nil {
+			stoppedAt = *t.StoppedAt
+		}
+		if stoppedAt.Before(cutoff) {
+			continue
+		}
+		stopped = append(stopped, StoppedTaskInfo{
+			ID:         shortName(aws.ToString(t.TaskArn)),
+			StopReason: aws.ToString(t.StoppedReason),
+			StoppedAt:  stoppedAt,
+		})
+	}
+	return stopped, nil
+}
+
 func shortName(arn string) string {
 	parts := strings.Split(arn, "/")
 	return parts[len(parts)-1]
