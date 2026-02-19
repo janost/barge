@@ -304,6 +304,83 @@ func ResolveContainer(containers []ContainerInfo, hint string) (ContainerInfo, e
 	return ContainerInfo{}, fmt.Errorf("cannot auto-select container; specify with --container: %s", strings.Join(names, ", "))
 }
 
+type ServiceEvent struct {
+	Timestamp time.Time
+	Message   string
+}
+
+type ServiceDetail struct {
+	Name         string
+	Status       string
+	DesiredCount int32
+	RunningCount int32
+	PendingCount int32
+	Events       []ServiceEvent
+	Deployments  []DeploymentInfo
+}
+
+type DeploymentInfo struct {
+	Status       string
+	TaskDef      string
+	DesiredCount int32
+	RunningCount int32
+	PendingCount int32
+	UpdatedAt    time.Time
+}
+
+func (c *Client) DescribeServiceDetail(ctx context.Context, cluster, service string) (ServiceDetail, error) {
+	out, err := c.ecs.DescribeServices(ctx, &ecs.DescribeServicesInput{
+		Cluster:  aws.String(cluster),
+		Services: []string{service},
+	})
+	if err != nil {
+		return ServiceDetail{}, fmt.Errorf("describing service: %w", err)
+	}
+	if len(out.Services) == 0 {
+		return ServiceDetail{}, fmt.Errorf("service %q not found", service)
+	}
+
+	svc := out.Services[0]
+
+	var events []ServiceEvent
+	for _, e := range svc.Events {
+		var ts time.Time
+		if e.CreatedAt != nil {
+			ts = *e.CreatedAt
+		}
+		events = append(events, ServiceEvent{
+			Timestamp: ts,
+			Message:   aws.ToString(e.Message),
+		})
+	}
+
+	var deployments []DeploymentInfo
+	for _, d := range svc.Deployments {
+		var updatedAt time.Time
+		if d.UpdatedAt != nil {
+			updatedAt = *d.UpdatedAt
+		}
+		deployments = append(deployments, DeploymentInfo{
+			Status:       aws.ToString(d.Status),
+			TaskDef:      shortName(aws.ToString(d.TaskDefinition)),
+			DesiredCount: d.DesiredCount,
+			RunningCount: d.RunningCount,
+			PendingCount: d.PendingCount,
+			UpdatedAt:    updatedAt,
+		})
+	}
+
+	return ServiceDetail{
+		Name:         aws.ToString(svc.ServiceName),
+		Status:       aws.ToString(svc.Status),
+		DesiredCount: svc.DesiredCount,
+		RunningCount: svc.RunningCount,
+		PendingCount: svc.PendingCount,
+		Events:       events,
+		Deployments:  deployments,
+	}, nil
+}
+
 func shortName(arn string) string {
 	parts := strings.Split(arn, "/")
 	return parts[len(parts)-1]
