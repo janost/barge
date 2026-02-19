@@ -31,7 +31,7 @@ var bookmarksPurgeCmd = &cobra.Command{
 func init() {
 	bookmarksCmd.AddCommand(bookmarksRmCmd)
 	bookmarksCmd.AddCommand(bookmarksPurgeCmd)
-	rootCmd.AddCommand(bookmarksCmd)
+	execCmd.AddCommand(bookmarksCmd)
 }
 
 func runBookmarks(cmd *cobra.Command, args []string) error {
@@ -40,7 +40,7 @@ func runBookmarks(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("loading bookmarks: %w", err)
 	}
 	if len(bookmarks) == 0 {
-		fmt.Fprintln(os.Stderr, "No bookmarks saved. Use 'barge save <name>' to create one.")
+		fmt.Fprintln(os.Stderr, "No bookmarks saved. Use 'barge exec save <name>' to create one.")
 		return nil
 	}
 

@@ -28,7 +28,7 @@ func init() {
 	saveCmd.Flags().StringVarP(&command, "command", "x", "/bin/sh", "Command to execute")
 	saveCmd.Flags().StringVarP(&instance, "instance", "i", "", "EC2 instance ID")
 	saveCmd.MarkFlagsMutuallyExclusive("instance", "cluster")
-	rootCmd.AddCommand(saveCmd)
+	execCmd.AddCommand(saveCmd)
 }
 
 func runSave(cmd *cobra.Command, args []string) error {

@@ -42,7 +42,7 @@ func init() {
 	cpCmd.Flags().StringVarP(&cpService, "service", "s", "", "ECS service name")
 	cpCmd.Flags().StringVarP(&cpTask, "task", "t", "", "ECS task ID (defaults to most recent)")
 	cpCmd.Flags().StringVarP(&cpContainer, "container", "C", "", "Container name (auto-selected if unambiguous)")
-	rootCmd.AddCommand(cpCmd)
+	execCmd.AddCommand(cpCmd)
 }
 
 func runCp(cmd *cobra.Command, args []string) error {

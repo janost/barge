@@ -21,7 +21,7 @@ var connectCmd = &cobra.Command{
 
 func init() {
 	connectCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the AWS CLI command instead of executing")
-	rootCmd.AddCommand(connectCmd)
+	execCmd.AddCommand(connectCmd)
 }
 
 func runConnect(cmd *cobra.Command, args []string) error {
@@ -37,7 +37,7 @@ func runConnect(cmd *cobra.Command, args []string) error {
 
 	bm, ok := bookmarks[name]
 	if !ok {
-		return fmt.Errorf("bookmark %q not found; run 'barge bookmarks' to list", name)
+		return fmt.Errorf("bookmark %q not found; run 'barge exec bookmarks' to list", name)
 	}
 
 	if bm.Mode == "ec2" {

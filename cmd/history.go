@@ -26,7 +26,7 @@ var historyClearCmd = &cobra.Command{
 
 func init() {
 	historyCmd.AddCommand(historyClearCmd)
-	rootCmd.AddCommand(historyCmd)
+	execCmd.AddCommand(historyCmd)
 }
 
 func runHistory(cmd *cobra.Command, args []string) error {
