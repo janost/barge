@@ -9,6 +9,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
@@ -19,6 +20,7 @@ type Client struct {
 	ecs *ecs.Client
 	ssm *ssm.Client
 	ec2 *ec2.Client
+	cwl *cloudwatchlogs.Client
 }
 
 type ServiceInfo struct {
@@ -63,6 +65,7 @@ func NewClient(ctx context.Context, profile, region string) (*Client, error) {
 		ecs: ecs.NewFromConfig(cfg),
 		ssm: ssm.NewFromConfig(cfg),
 		ec2: ec2.NewFromConfig(cfg),
+		cwl: cloudwatchlogs.NewFromConfig(cfg),
 	}, nil
 }
 
