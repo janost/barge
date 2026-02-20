@@ -74,3 +74,8 @@ func (r *ECSClusterResource) Error() error { return r.err }
 func (r *ECSClusterResource) ChildResource(row table.Row) (string, Resource) {
 	return row[0], NewECSServiceResource(row[0])
 }
+
+// SecondaryChildResource drills into all tasks on the cluster (including standalone tasks).
+func (r *ECSClusterResource) SecondaryChildResource(row table.Row) (string, Resource) {
+	return row[0], NewECSTaskResource(row[0], "")
+}

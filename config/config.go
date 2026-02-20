@@ -14,18 +14,20 @@ type Config struct {
 
 // Keybinds maps actions to key strings (matching tea.KeyMsg.String() values).
 type Keybinds struct {
-	Search  string `yaml:"search"`
-	Quit    string `yaml:"quit"`
-	Refresh string `yaml:"refresh"`
+	Search   string `yaml:"search"`
+	Quit     string `yaml:"quit"`
+	Refresh  string `yaml:"refresh"`
+	DrillAlt string `yaml:"drill_alt"`
 }
 
 // Default returns the default configuration.
 func Default() Config {
 	return Config{
 		Keybinds: Keybinds{
-			Search:  "/",
-			Quit:    "q",
-			Refresh: "r",
+			Search:   "/",
+			Quit:     "q",
+			Refresh:  "r",
+			DrillAlt: "shift+enter",
 		},
 	}
 }

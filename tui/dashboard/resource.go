@@ -26,6 +26,12 @@ type Drillable interface {
 	ChildResource(row table.Row) (label string, child Resource)
 }
 
+// SecondaryDrillable is optionally implemented by Drillable resources
+// that support an alternate drill-down path (e.g. Shift+Enter).
+type SecondaryDrillable interface {
+	SecondaryChildResource(row table.Row) (label string, child Resource)
+}
+
 // processExitMsg is sent when a subprocess (e.g. SSM shell) completes.
 type processExitMsg struct{ err error }
 
