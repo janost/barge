@@ -20,10 +20,11 @@ const (
 
 // Model is the main dashboard Bubble Tea model.
 type Model struct {
-	client   *bargeaws.Client
-	resource Resource
-	table    table.Model
-	state    state
+	client      *bargeaws.Client
+	resource    Resource
+	table       table.Model
+	baseColumns []Column
+	state       state
 
 	// Action menu
 	actions   []Action
@@ -54,11 +55,36 @@ func New(client *bargeaws.Client, resource Resource) Model {
 	t.SetStyles(tableStyles())
 
 	return Model{
-		client:   client,
-		resource: resource,
-		table:    t,
-		state:    stateLoading,
+		client:      client,
+		resource:    resource,
+		baseColumns: columns,
+		table:       t,
+		state:       stateLoading,
 	}
+}
+
+// resizeColumns distributes the terminal width across table columns proportionally.
+func (m *Model) resizeColumns() {
+	if m.width <= 0 || len(m.baseColumns) == 0 {
+		return
+	}
+	totalBase := 0
+	for _, c := range m.baseColumns {
+		totalBase += c.Width
+	}
+	available := m.width
+	cols := make([]table.Column, len(m.baseColumns))
+	remaining := available
+	for i, c := range m.baseColumns {
+		if i == len(m.baseColumns)-1 {
+			cols[i] = table.Column{Title: c.Title, Width: remaining}
+		} else {
+			w := available * c.Width / totalBase
+			cols[i] = table.Column{Title: c.Title, Width: w}
+			remaining -= w
+		}
+	}
+	m.table.SetColumns(cols)
 }
 
 func (m Model) Init() tea.Cmd {
@@ -70,7 +96,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.table.SetHeight(msg.Height - 5)
+		// 3 lines for header+shortcuts+blank, 1 for status bar
+		m.table.SetHeight(msg.Height - 4)
+		m.resizeColumns()
 		return m, nil
 
 	case processExitMsg:
