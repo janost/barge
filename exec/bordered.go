@@ -62,7 +62,7 @@ func (s *escScanner) Write(p []byte) (int, error) {
 				s.state = 0
 			}
 		case 2: // CSI parameters
-			if ch >= 0x30 && ch <= 0x3f {
+			if (ch >= 0x20 && ch <= 0x2f) || (ch >= 0x30 && ch <= 0x3f) {
 				s.buf = append(s.buf, ch)
 			} else if ch >= 0x40 && ch <= 0x7e {
 				s.handleCSI(ch)
@@ -95,6 +95,9 @@ func (s *escScanner) handleCSI(final byte) {
 		s.redraw()
 	case final == 'r' && params == "":
 		// DECSTBM reset (no params) — redraw to re-apply scroll region
+		s.redraw()
+	case final == 'p' && params == "!":
+		// DECSTR (Soft Terminal Reset) — redraw to re-apply scroll region and DECOM
 		s.redraw()
 	case final == 'l' && params == "?6":
 		// DECOM disable — suppress to keep origin mode active
