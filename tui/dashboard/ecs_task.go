@@ -25,7 +25,7 @@ func NewECSTaskResource(cluster, service string) *ECSTaskResource {
 	return &ECSTaskResource{cluster: cluster, service: service}
 }
 
-func (r *ECSTaskResource) Name() string { return "ECS Tasks" }
+func (r *ECSTaskResource) Name() string { return "Tasks" }
 
 func (r *ECSTaskResource) Columns() []Column {
 	return []Column{

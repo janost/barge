@@ -23,12 +23,13 @@ const (
 
 // Model is the main dashboard Bubble Tea model.
 type Model struct {
-	client        *bargeaws.Client
-	resourceStack []Resource
-	breadcrumbs   []string
-	table         table.Model
-	baseColumns   []Column
-	state         state
+	client          *bargeaws.Client
+	resourceStack   []Resource
+	breadcrumbs     []string
+	breadcrumbMarks []int // breadcrumb length before each drill-down
+	table           table.Model
+	baseColumns     []Column
+	state           state
 
 	// Action menu
 	actions   []Action
@@ -102,6 +103,30 @@ func (m *Model) resizeColumns() {
 		}
 	}
 	m.table.SetColumns(cols)
+}
+
+func (m *Model) drillDown(label string, child Resource) {
+	m.breadcrumbMarks = append(m.breadcrumbMarks, len(m.breadcrumbs))
+	m.breadcrumbs = append(m.breadcrumbs, label)
+	if child.Name() != label {
+		m.breadcrumbs = append(m.breadcrumbs, child.Name())
+	}
+	m.resourceStack = append(m.resourceStack, child)
+	m.reconfigureTable(child)
+	m.searchQuery = ""
+	m.state = stateLoading
+}
+
+func (m *Model) drillBack() {
+	mark := m.breadcrumbMarks[len(m.breadcrumbMarks)-1]
+	m.breadcrumbMarks = m.breadcrumbMarks[:len(m.breadcrumbMarks)-1]
+	m.breadcrumbs = m.breadcrumbs[:mark]
+	m.resourceStack = m.resourceStack[:len(m.resourceStack)-1]
+	parent := m.currentResource()
+	m.reconfigureTable(parent)
+	m.table.SetRows(parent.Rows())
+	m.state = stateTable
+	m.message = ""
 }
 
 func (m *Model) reconfigureTable(res Resource) {
@@ -187,11 +212,7 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if sd, ok := m.currentResource().(SecondaryDrillable); ok {
 			label, child := sd.SecondaryChildResource(row)
-			m.resourceStack = append(m.resourceStack, child)
-			m.breadcrumbs = append(m.breadcrumbs, label)
-			m.reconfigureTable(child)
-			m.searchQuery = ""
-			m.state = stateLoading
+			m.drillDown(label, child)
 			return m, child.FetchCmd(m.client)
 		}
 		return m, nil
@@ -202,11 +223,7 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if drillable, ok := m.currentResource().(Drillable); ok {
 			label, child := drillable.ChildResource(row)
-			m.resourceStack = append(m.resourceStack, child)
-			m.breadcrumbs = append(m.breadcrumbs, label)
-			m.reconfigureTable(child)
-			m.searchQuery = ""
-			m.state = stateLoading
+			m.drillDown(label, child)
 			return m, child.FetchCmd(m.client)
 		}
 		m.actions = m.currentResource().Actions(row)
@@ -220,13 +237,7 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if len(m.resourceStack) > 1 {
-			m.resourceStack = m.resourceStack[:len(m.resourceStack)-1]
-			m.breadcrumbs = m.breadcrumbs[:len(m.breadcrumbs)-1]
-			parent := m.currentResource()
-			m.reconfigureTable(parent)
-			m.table.SetRows(parent.Rows())
-			m.state = stateTable
-			m.message = ""
+			m.drillBack()
 			return m, nil
 		}
 		return m, nil
@@ -414,9 +425,13 @@ func (m Model) View() string {
 		shortcuts = shortcutStyle.Render("Enter:Select  Esc:Back")
 	} else {
 		searchKey := m.config.Keybinds.Search
-		nav := "↑↓:Navigate  Enter:Select  " + searchKey + ":Search  r:Refresh  q:Quit"
+		var altDrill string
+		if _, ok := m.currentResource().(SecondaryDrillable); ok {
+			altDrill = "  " + m.config.Keybinds.DrillAlt + ":Alt-Drill"
+		}
+		nav := "↑↓:Navigate  Enter:Select" + altDrill + "  " + searchKey + ":Search  r:Refresh  q:Quit"
 		if len(m.resourceStack) > 1 {
-			nav = "↑↓:Navigate  Enter:Select  Esc:Back  " + searchKey + ":Search  r:Refresh  q:Quit"
+			nav = "↑↓:Navigate  Enter:Select  Esc:Back" + altDrill + "  " + searchKey + ":Search  r:Refresh  q:Quit"
 		}
 		if m.searchQuery != "" {
 			shortcuts = searchStyle.Render("["+m.searchQuery+"]") + "  " + shortcutStyle.Render(nav)

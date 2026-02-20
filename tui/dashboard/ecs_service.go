@@ -24,7 +24,7 @@ func NewECSServiceResource(cluster string) *ECSServiceResource {
 	return &ECSServiceResource{cluster: cluster}
 }
 
-func (r *ECSServiceResource) Name() string { return "ECS Services" }
+func (r *ECSServiceResource) Name() string { return "Services" }
 
 func (r *ECSServiceResource) Columns() []Column {
 	return []Column{

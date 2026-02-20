@@ -27,7 +27,7 @@ func Default() Config {
 			Search:   "/",
 			Quit:     "q",
 			Refresh:  "r",
-			DrillAlt: "shift+enter",
+			DrillAlt: "T",
 		},
 	}
 }
