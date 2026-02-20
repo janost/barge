@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	bargeaws "github.com/janost/barge/aws"
+	"github.com/janost/barge/config"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -39,6 +40,9 @@ type Model struct {
 
 	// Status
 	message string
+
+	// Config
+	config config.Config
 }
 
 func (m *Model) currentResource() Resource {
@@ -46,7 +50,7 @@ func (m *Model) currentResource() Resource {
 }
 
 // New creates a new dashboard model with the given resource.
-func New(client *bargeaws.Client, resource Resource) Model {
+func New(client *bargeaws.Client, resource Resource, cfg config.Config) Model {
 	columns := resource.Columns()
 	tableCols := make([]table.Column, len(columns))
 	for i, c := range columns {
@@ -68,6 +72,7 @@ func New(client *bargeaws.Client, resource Resource) Model {
 		baseColumns:   columns,
 		table:         t,
 		state:         stateLoading,
+		config:        cfg,
 	}
 }
 

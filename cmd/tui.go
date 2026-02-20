@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	bargeaws "github.com/janost/barge/aws"
+	"github.com/janost/barge/config"
 	"github.com/janost/barge/tui/dashboard"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
@@ -30,8 +31,9 @@ func runTUICmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	resource := dashboard.NewEC2InstanceResource()
-	model := dashboard.New(client, resource)
+	cfg := config.Load()
+	resource := dashboard.NewResourcePicker()
+	model := dashboard.New(client, resource, cfg)
 
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
