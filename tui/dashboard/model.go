@@ -20,11 +20,12 @@ const (
 
 // Model is the main dashboard Bubble Tea model.
 type Model struct {
-	client      *bargeaws.Client
-	resource    Resource
-	table       table.Model
-	baseColumns []Column
-	state       state
+	client        *bargeaws.Client
+	resourceStack []Resource
+	breadcrumbs   []string
+	table         table.Model
+	baseColumns   []Column
+	state         state
 
 	// Action menu
 	actions   []Action
@@ -36,6 +37,10 @@ type Model struct {
 
 	// Status
 	message string
+}
+
+func (m *Model) currentResource() Resource {
+	return m.resourceStack[len(m.resourceStack)-1]
 }
 
 // New creates a new dashboard model with the given resource.
@@ -55,11 +60,12 @@ func New(client *bargeaws.Client, resource Resource) Model {
 	t.SetStyles(tableStyles())
 
 	return Model{
-		client:      client,
-		resource:    resource,
-		baseColumns: columns,
-		table:       t,
-		state:       stateLoading,
+		client:        client,
+		resourceStack: []Resource{resource},
+		breadcrumbs:   []string{resource.Name()},
+		baseColumns:   columns,
+		table:         t,
+		state:         stateLoading,
 	}
 }
 
@@ -87,8 +93,19 @@ func (m *Model) resizeColumns() {
 	m.table.SetColumns(cols)
 }
 
+func (m *Model) reconfigureTable(res Resource) {
+	columns := res.Columns()
+	m.baseColumns = columns
+	tableCols := make([]table.Column, len(columns))
+	for i, c := range columns {
+		tableCols[i] = table.Column{Title: c.Title, Width: c.Width}
+	}
+	m.table.SetColumns(tableCols)
+	m.resizeColumns()
+}
+
 func (m Model) Init() tea.Cmd {
-	return m.resource.FetchCmd(m.client)
+	return m.currentResource().FetchCmd(m.client)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -108,7 +125,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.message = "Session ended."
 		}
-		return m, m.resource.FetchCmd(m.client)
+		return m, m.currentResource().FetchCmd(m.client)
 
 	case tea.KeyMsg:
 		switch m.state {
@@ -124,8 +141,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Let resource handle data messages
-	if m.resource.HandleMsg(msg) {
-		m.table.SetRows(m.resource.Rows())
+	if m.currentResource().HandleMsg(msg) {
+		m.table.SetRows(m.currentResource().Rows())
 		m.state = stateTable
 		m.message = ""
 		return m, nil
@@ -143,16 +160,37 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "enter":
 		row := m.table.SelectedRow()
-		if row != nil {
-			m.actions = m.resource.Actions(row)
-			m.actionIdx = 0
-			m.state = stateActions
+		if row == nil {
+			return m, nil
+		}
+		if drillable, ok := m.currentResource().(Drillable); ok {
+			label, child := drillable.ChildResource(row)
+			m.resourceStack = append(m.resourceStack, child)
+			m.breadcrumbs = append(m.breadcrumbs, label)
+			m.reconfigureTable(child)
+			m.state = stateLoading
+			return m, child.FetchCmd(m.client)
+		}
+		m.actions = m.currentResource().Actions(row)
+		m.actionIdx = 0
+		m.state = stateActions
+		return m, nil
+	case "esc", "backspace":
+		if len(m.resourceStack) > 1 {
+			m.resourceStack = m.resourceStack[:len(m.resourceStack)-1]
+			m.breadcrumbs = m.breadcrumbs[:len(m.breadcrumbs)-1]
+			parent := m.currentResource()
+			m.reconfigureTable(parent)
+			m.table.SetRows(parent.Rows())
+			m.state = stateTable
+			m.message = ""
+			return m, nil
 		}
 		return m, nil
 	case "r":
 		m.state = stateLoading
 		m.message = ""
-		return m, m.resource.FetchCmd(m.client)
+		return m, m.currentResource().FetchCmd(m.client)
 	}
 
 	var cmd tea.Cmd
@@ -189,7 +227,7 @@ func (m Model) View() string {
 
 	// Header line
 	title := headerStyle.Render(" barge")
-	title += " ▸ " + resourceStyle.Render(m.resource.Name())
+	title += " ▸ " + resourceStyle.Render(m.currentResource().Name())
 	if m.state == stateActions {
 		row := m.table.SelectedRow()
 		if row != nil {
@@ -199,7 +237,7 @@ func (m Model) View() string {
 			}
 		}
 	} else {
-		count := len(m.resource.Rows())
+		count := len(m.currentResource().Rows())
 		title += "  " + countStyle.Render(fmt.Sprintf("%d items", count))
 	}
 	b.WriteString(title + "\n")
@@ -219,7 +257,7 @@ func (m Model) View() string {
 	case stateActions:
 		b.WriteString(m.renderActions())
 	default:
-		if err := m.resource.Error(); err != nil {
+		if err := m.currentResource().Error(); err != nil {
 			b.WriteString(errorStyle.Render(" Error: "+err.Error()) + "\n")
 		} else {
 			b.WriteString(m.table.View() + "\n")
