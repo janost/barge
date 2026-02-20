@@ -27,7 +27,10 @@ type Client struct {
 
 type ServiceInfo struct {
 	Name         string
+	Status       string
+	DesiredCount int32
 	RunningCount int32
+	PendingCount int32
 	TaskDefName  string
 }
 
@@ -46,6 +49,14 @@ type ContainerInfo struct {
 	Image     string
 	Status    string
 	Essential bool
+}
+
+type ClusterInfo struct {
+	Name           string
+	Status         string
+	ActiveServices int32
+	RunningTasks   int32
+	PendingTasks   int32
 }
 
 func NewClient(ctx context.Context, profile, region string) (*Client, error) {
@@ -91,6 +102,43 @@ func (c *Client) ListClusters(ctx context.Context) ([]string, error) {
 	return names, nil
 }
 
+func (c *Client) ListClustersDetail(ctx context.Context) ([]ClusterInfo, error) {
+	var clusterArns []string
+	p := ecs.NewListClustersPaginator(c.ecs, &ecs.ListClustersInput{})
+	for p.HasMorePages() {
+		page, err := p.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("listing clusters: %w", err)
+		}
+		clusterArns = append(clusterArns, page.ClusterArns...)
+	}
+	if len(clusterArns) == 0 {
+		return nil, nil
+	}
+
+	out, err := c.ecs.DescribeClusters(ctx, &ecs.DescribeClustersInput{
+		Clusters: clusterArns,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("describing clusters: %w", err)
+	}
+
+	infos := make([]ClusterInfo, 0, len(out.Clusters))
+	for _, cl := range out.Clusters {
+		infos = append(infos, ClusterInfo{
+			Name:           aws.ToString(cl.ClusterName),
+			Status:         aws.ToString(cl.Status),
+			ActiveServices: cl.ActiveServicesCount,
+			RunningTasks:   cl.RunningTasksCount,
+			PendingTasks:   cl.PendingTasksCount,
+		})
+	}
+	sort.Slice(infos, func(i, j int) bool {
+		return infos[i].Name < infos[j].Name
+	})
+	return infos, nil
+}
+
 func (c *Client) ListServices(ctx context.Context, cluster string) ([]ServiceInfo, error) {
 	var arns []string
 	paginator := ecs.NewListServicesPaginator(c.ecs, &ecs.ListServicesInput{
@@ -125,7 +173,10 @@ func (c *Client) ListServices(ctx context.Context, cluster string) ([]ServiceInf
 		for _, svc := range out.Services {
 			services = append(services, ServiceInfo{
 				Name:         aws.ToString(svc.ServiceName),
+				Status:       aws.ToString(svc.Status),
+				DesiredCount: svc.DesiredCount,
 				RunningCount: svc.RunningCount,
+				PendingCount: svc.PendingCount,
 				TaskDefName:  shortName(aws.ToString(svc.TaskDefinition)),
 			})
 		}
@@ -138,11 +189,14 @@ func (c *Client) ListServices(ctx context.Context, cluster string) ([]ServiceInf
 }
 
 func (c *Client) ListTasks(ctx context.Context, cluster, service string) ([]TaskInfo, error) {
+	input := &ecs.ListTasksInput{
+		Cluster: aws.String(cluster),
+	}
+	if service != "" {
+		input.ServiceName = aws.String(service)
+	}
 	var allArns []string
-	paginator := ecs.NewListTasksPaginator(c.ecs, &ecs.ListTasksInput{
-		Cluster:     aws.String(cluster),
-		ServiceName: aws.String(service),
-	})
+	paginator := ecs.NewListTasksPaginator(c.ecs, input)
 	for paginator.HasMorePages() {
 		page, err := paginator.NextPage(ctx)
 		if err != nil {
@@ -434,6 +488,46 @@ func (c *Client) ListStoppedTasks(ctx context.Context, cluster, service string) 
 func shortName(arn string) string {
 	parts := strings.Split(arn, "/")
 	return parts[len(parts)-1]
+}
+
+type TaskDefInfo struct {
+	Family   string
+	Revision int
+	Arn      string
+}
+
+func (c *Client) ListTaskDefinitions(ctx context.Context) ([]TaskDefInfo, error) {
+	p := ecs.NewListTaskDefinitionsPaginator(c.ecs, &ecs.ListTaskDefinitionsInput{
+		Status: ecstypes.TaskDefinitionStatusActive,
+	})
+	families := make(map[string]TaskDefInfo)
+	for p.HasMorePages() {
+		page, err := p.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("listing task definitions: %w", err)
+		}
+		for _, arn := range page.TaskDefinitionArns {
+			name := shortName(arn)
+			parts := strings.SplitN(name, ":", 2)
+			family := parts[0]
+			rev := 0
+			if len(parts) == 2 {
+				fmt.Sscanf(parts[1], "%d", &rev)
+			}
+			if existing, ok := families[family]; !ok || rev > existing.Revision {
+				families[family] = TaskDefInfo{Family: family, Revision: rev, Arn: arn}
+			}
+		}
+	}
+
+	infos := make([]TaskDefInfo, 0, len(families))
+	for _, info := range families {
+		infos = append(infos, info)
+	}
+	sort.Slice(infos, func(i, j int) bool {
+		return infos[i].Family < infos[j].Family
+	})
+	return infos, nil
 }
 
 // FindTask finds a task by ID in a slice, or returns an error.
