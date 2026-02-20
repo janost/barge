@@ -112,6 +112,7 @@ func (m *Model) reconfigureTable(res Resource) {
 	for i, c := range columns {
 		tableCols[i] = table.Column{Title: c.Title, Width: c.Width}
 	}
+	m.table.SetRows([]table.Row{}) // clear rows before changing column count
 	m.table.SetColumns(tableCols)
 	m.resizeColumns()
 }
