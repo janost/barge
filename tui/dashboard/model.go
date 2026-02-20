@@ -266,14 +266,36 @@ func (m *Model) applySearch() {
 		m.table.SetRows(allRows)
 		return
 	}
+	terms := strings.Fields(m.searchQuery)
+	if len(terms) == 0 {
+		m.table.SetRows(allRows)
+		return
+	}
 	targets := make([]string, len(allRows))
 	for i, row := range allRows {
 		targets[i] = strings.Join(row, " ")
 	}
-	matches := fuzzy.Find(m.searchQuery, targets)
-	filtered := make([]table.Row, len(matches))
-	for i, match := range matches {
-		filtered[i] = allRows[match.Index]
+	// Each term must independently fuzzy-match against the row
+	matched := make([]bool, len(allRows))
+	for i := range matched {
+		matched[i] = true
+	}
+	for _, term := range terms {
+		termMatches := make(map[int]bool)
+		for _, r := range fuzzy.Find(term, targets) {
+			termMatches[r.Index] = true
+		}
+		for i := range matched {
+			if !termMatches[i] {
+				matched[i] = false
+			}
+		}
+	}
+	var filtered []table.Row
+	for i, ok := range matched {
+		if ok {
+			filtered = append(filtered, allRows[i])
+		}
 	}
 	m.table.SetRows(filtered)
 }
