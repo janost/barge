@@ -37,6 +37,8 @@ func (r *ResourcePicker) Rows() []table.Row {
 	return []table.Row{
 		{"EC2 Instances", "Managed instances with SSM agent"},
 		{"Auto Scaling Groups", "EC2 Auto Scaling Groups"},
+		{"ECS Clusters", "ECS clusters, services, and tasks"},
+		{"ECS Task Definitions", "Task definition families"},
 	}
 }
 
@@ -48,6 +50,10 @@ func (r *ResourcePicker) ChildResource(row table.Row) (string, Resource) {
 	switch row[0] {
 	case "Auto Scaling Groups":
 		return "Auto Scaling Groups", NewASGResource()
+	case "ECS Clusters":
+		return "ECS Clusters", NewECSClusterResource()
+	case "ECS Task Definitions":
+		return "ECS Task Definitions", NewECSTaskDefResource()
 	default:
 		return "EC2 Instances", NewEC2InstanceResource()
 	}
