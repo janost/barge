@@ -239,18 +239,21 @@ func (m Model) renderBorderedPanel(title, content, shortcuts string) string {
 	border := lipgloss.RoundedBorder()
 	bStyle := lipgloss.NewStyle().Foreground(borderFg)
 	w := m.width
+	if w < 4 {
+		return content
+	}
 
 	// Top line: ╭─ Title ──────────────────╮
 	titleRendered := " " + title + " "
 	titleWidth := lipgloss.Width(titleRendered)
-	topPad := w - titleWidth - 2 // 2 for corner chars
-	if topPad < 0 {
-		topPad = 0
+	topFill := w - titleWidth - 3 // 2 corners + 1 leading border char
+	if topFill < 0 {
+		topFill = 0
 	}
 	topLine := bStyle.Render(border.TopLeft) +
 		bStyle.Render(border.Top) +
 		titleRendered +
-		bStyle.Render(strings.Repeat(border.Top, topPad-1)) +
+		bStyle.Render(strings.Repeat(border.Top, topFill)) +
 		bStyle.Render(border.TopRight)
 
 	// Content lines: │ content │
@@ -272,14 +275,14 @@ func (m Model) renderBorderedPanel(title, content, shortcuts string) string {
 	// Bottom line: ╰─ shortcuts ──────────────╯
 	shortRendered := " " + shortcuts + " "
 	shortWidth := lipgloss.Width(shortRendered)
-	botPad := w - shortWidth - 2
-	if botPad < 0 {
-		botPad = 0
+	botFill := w - shortWidth - 3 // 2 corners + 1 leading border char
+	if botFill < 0 {
+		botFill = 0
 	}
 	botLine := bStyle.Render(border.BottomLeft) +
 		bStyle.Render(border.Bottom) +
 		shortRendered +
-		bStyle.Render(strings.Repeat(border.Bottom, botPad-1)) +
+		bStyle.Render(strings.Repeat(border.Bottom, botFill)) +
 		bStyle.Render(border.BottomRight)
 
 	return topLine + "\n" + body.String() + botLine
