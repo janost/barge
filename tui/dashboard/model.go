@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/sahilm/fuzzy"
 )
 
 type state int
@@ -37,6 +38,10 @@ type Model struct {
 	// Layout
 	width  int
 	height int
+
+	// Search
+	searching   bool
+	searchQuery string
 
 	// Status
 	message string
@@ -162,10 +167,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "q", "ctrl+c":
+	if m.searching {
+		return m.updateSearch(msg)
+	}
+
+	key := msg.String()
+	switch {
+	case key == "ctrl+c":
 		return m, tea.Quit
-	case "enter":
+	case key == m.config.Keybinds.Quit:
+		return m, tea.Quit
+	case key == m.config.Keybinds.Search:
+		m.searching = true
+		return m, nil
+	case key == "enter":
 		row := m.table.SelectedRow()
 		if row == nil {
 			return m, nil
@@ -175,6 +190,7 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.resourceStack = append(m.resourceStack, child)
 			m.breadcrumbs = append(m.breadcrumbs, label)
 			m.reconfigureTable(child)
+			m.searchQuery = ""
 			m.state = stateLoading
 			return m, child.FetchCmd(m.client)
 		}
@@ -182,7 +198,12 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.actionIdx = 0
 		m.state = stateActions
 		return m, nil
-	case "esc", "backspace":
+	case key == "esc" || key == "backspace":
+		if m.searchQuery != "" {
+			m.searchQuery = ""
+			m.applySearch()
+			return m, nil
+		}
 		if len(m.resourceStack) > 1 {
 			m.resourceStack = m.resourceStack[:len(m.resourceStack)-1]
 			m.breadcrumbs = m.breadcrumbs[:len(m.breadcrumbs)-1]
@@ -194,15 +215,66 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, nil
-	case "r":
+	case key == m.config.Keybinds.Refresh:
 		m.state = stateLoading
 		m.message = ""
+		m.searchQuery = ""
 		return m, m.currentResource().FetchCmd(m.client)
 	}
 
 	var cmd tea.Cmd
 	m.table, cmd = m.table.Update(msg)
 	return m, cmd
+}
+
+func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "esc":
+		m.searching = false
+		m.searchQuery = ""
+		m.applySearch()
+		return m, nil
+	case "enter":
+		m.searching = false
+		return m, nil
+	case "backspace":
+		if len(m.searchQuery) > 0 {
+			m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
+			m.applySearch()
+		}
+		return m, nil
+	case "ctrl+c":
+		return m, tea.Quit
+	case "up", "down":
+		var cmd tea.Cmd
+		m.table, cmd = m.table.Update(msg)
+		return m, cmd
+	default:
+		if len(key) == 1 {
+			m.searchQuery += key
+			m.applySearch()
+		}
+		return m, nil
+	}
+}
+
+func (m *Model) applySearch() {
+	allRows := m.currentResource().Rows()
+	if m.searchQuery == "" {
+		m.table.SetRows(allRows)
+		return
+	}
+	targets := make([]string, len(allRows))
+	for i, row := range allRows {
+		targets[i] = strings.Join(row, " ")
+	}
+	matches := fuzzy.Find(m.searchQuery, targets)
+	filtered := make([]table.Row, len(matches))
+	for i, match := range matches {
+		filtered[i] = allRows[match.Index]
+	}
+	m.table.SetRows(filtered)
 }
 
 func (m Model) updateActions(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -309,14 +381,23 @@ func (m Model) View() string {
 
 	// Build shortcuts
 	var shortcuts string
-	if m.state == stateActions {
+	if m.searching {
+		cursor := "█"
+		shortcuts = searchStyle.Render(m.config.Keybinds.Search+" "+m.searchQuery+cursor) +
+			"  " + shortcutStyle.Render("Enter:Keep  Esc:Clear")
+	} else if m.state == stateActions {
 		shortcuts = shortcutStyle.Render("Enter:Select  Esc:Back")
 	} else {
-		nav := "↑↓:Navigate  Enter:Select  r:Refresh  q:Quit"
+		searchKey := m.config.Keybinds.Search
+		nav := "↑↓:Navigate  Enter:Select  " + searchKey + ":Search  r:Refresh  q:Quit"
 		if len(m.resourceStack) > 1 {
-			nav = "↑↓:Navigate  Enter:Select  Esc:Back  r:Refresh  q:Quit"
+			nav = "↑↓:Navigate  Enter:Select  Esc:Back  " + searchKey + ":Search  r:Refresh  q:Quit"
 		}
-		shortcuts = shortcutStyle.Render(nav)
+		if m.searchQuery != "" {
+			shortcuts = searchStyle.Render("["+m.searchQuery+"]") + "  " + shortcutStyle.Render(nav)
+		} else {
+			shortcuts = shortcutStyle.Render(nav)
+		}
 	}
 
 	// Build inner content
