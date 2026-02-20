@@ -16,6 +16,8 @@ var (
 	selectedStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
 	actionCursorStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
 	actionNormalStyle = lipgloss.NewStyle().PaddingLeft(2)
+	borderFg          = lipgloss.Color("8")
+	sepStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 )
 
 func tableStyles() table.Styles {

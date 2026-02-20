@@ -8,6 +8,7 @@ import (
 	bargeaws "github.com/janost/barge/aws"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type state int
@@ -78,7 +79,7 @@ func (m *Model) resizeColumns() {
 	for _, c := range m.baseColumns {
 		totalBase += c.Width
 	}
-	available := m.width
+	available := m.width - 2 // subtract border chars
 	cols := make([]table.Column, len(m.baseColumns))
 	remaining := available
 	for i, c := range m.baseColumns {
@@ -113,7 +114,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// 3 lines for header+shortcuts+blank, 1 for status bar
+		// 2 for top/bottom border, 1 for table header, 1 for status bar
 		m.table.SetHeight(msg.Height - 4)
 		m.resizeColumns()
 		return m, nil
@@ -222,54 +223,117 @@ func (m Model) updateActions(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) View() string {
-	var b strings.Builder
+func (m Model) renderBreadcrumb() string {
+	parts := make([]string, len(m.breadcrumbs))
+	for i, b := range m.breadcrumbs {
+		if i == len(m.breadcrumbs)-1 {
+			parts[i] = resourceStyle.Render(b)
+		} else {
+			parts[i] = countStyle.Render(b)
+		}
+	}
+	return strings.Join(parts, sepStyle.Render(" ▸ "))
+}
 
-	// Header line
-	title := headerStyle.Render(" barge")
-	title += " ▸ " + resourceStyle.Render(m.currentResource().Name())
+func (m Model) renderBorderedPanel(title, content, shortcuts string) string {
+	border := lipgloss.RoundedBorder()
+	bStyle := lipgloss.NewStyle().Foreground(borderFg)
+	w := m.width
+
+	// Top line: ╭─ Title ──────────────────╮
+	titleRendered := " " + title + " "
+	titleWidth := lipgloss.Width(titleRendered)
+	topPad := w - titleWidth - 2 // 2 for corner chars
+	if topPad < 0 {
+		topPad = 0
+	}
+	topLine := bStyle.Render(border.TopLeft) +
+		bStyle.Render(border.Top) +
+		titleRendered +
+		bStyle.Render(strings.Repeat(border.Top, topPad-1)) +
+		bStyle.Render(border.TopRight)
+
+	// Content lines: │ content │
+	contentLines := strings.Split(content, "\n")
+	innerWidth := w - 2 // 2 for side border chars
+	var body strings.Builder
+	for _, line := range contentLines {
+		lineWidth := lipgloss.Width(line)
+		pad := innerWidth - lineWidth
+		if pad < 0 {
+			pad = 0
+		}
+		body.WriteString(
+			bStyle.Render(border.Left) +
+				line + strings.Repeat(" ", pad) +
+				bStyle.Render(border.Right) + "\n")
+	}
+
+	// Bottom line: ╰─ shortcuts ──────────────╯
+	shortRendered := " " + shortcuts + " "
+	shortWidth := lipgloss.Width(shortRendered)
+	botPad := w - shortWidth - 2
+	if botPad < 0 {
+		botPad = 0
+	}
+	botLine := bStyle.Render(border.BottomLeft) +
+		bStyle.Render(border.Bottom) +
+		shortRendered +
+		bStyle.Render(strings.Repeat(border.Bottom, botPad-1)) +
+		bStyle.Render(border.BottomRight)
+
+	return topLine + "\n" + body.String() + botLine
+}
+
+func (m Model) View() string {
+	// Build breadcrumb title
+	title := m.renderBreadcrumb()
 	if m.state == stateActions {
 		row := m.table.SelectedRow()
 		if row != nil {
-			title += " ▸ " + selectedStyle.Render(row[0])
-			if len(row) > 1 && row[1] != "" {
-				title += " " + countStyle.Render("("+row[1]+")")
-			}
+			title += sepStyle.Render(" ▸ ") + selectedStyle.Render(row[0])
 		}
 	} else {
 		count := len(m.currentResource().Rows())
-		title += "  " + countStyle.Render(fmt.Sprintf("%d items", count))
+		title += "  " + countStyle.Render(fmt.Sprintf("[%d]", count))
 	}
-	b.WriteString(title + "\n")
 
-	// Shortcuts line
+	// Build shortcuts
+	var shortcuts string
 	if m.state == stateActions {
-		b.WriteString(shortcutStyle.Render(" [Enter] Select  [Esc] Back") + "\n")
+		shortcuts = shortcutStyle.Render("Enter:Select  Esc:Back")
 	} else {
-		b.WriteString(shortcutStyle.Render(" [↑↓] Navigate  [Enter] Actions  [r] Refresh  [q] Quit") + "\n")
+		nav := "↑↓:Navigate  Enter:Select  r:Refresh  q:Quit"
+		if len(m.resourceStack) > 1 {
+			nav = "↑↓:Navigate  Enter:Select  Esc:Back  r:Refresh  q:Quit"
+		}
+		shortcuts = shortcutStyle.Render(nav)
 	}
-	b.WriteString("\n")
 
-	// Main content
+	// Build inner content
+	var content string
 	switch m.state {
 	case stateLoading:
-		b.WriteString(statusStyle.Render(" Loading...") + "\n")
+		content = statusStyle.Render("Loading...")
 	case stateActions:
-		b.WriteString(m.renderActions())
+		content = m.renderActions()
 	default:
 		if err := m.currentResource().Error(); err != nil {
-			b.WriteString(errorStyle.Render(" Error: "+err.Error()) + "\n")
+			content = errorStyle.Render("Error: " + err.Error())
 		} else {
-			b.WriteString(m.table.View() + "\n")
+			content = m.table.View()
 		}
 	}
 
-	// Status bar
+	// Render bordered panel
+	panel := m.renderBorderedPanel(title, content, shortcuts)
+
+	// Status bar below
 	if m.message != "" {
-		b.WriteString("\n" + statusStyle.Render(" "+m.message))
+		panel += "\n" + statusStyle.Render(" "+m.message)
 	}
 
-	return b.String()
+	return panel
 }
 
 func (m Model) renderActions() string {
