@@ -30,10 +30,11 @@ func (r *EC2Resource) Name() string { return "EC2 Instances" }
 
 func (r *EC2Resource) Columns() []Column {
 	return []Column{
-		{"INSTANCE", 22},
-		{"NAME", 28},
+		{"INSTANCE", 20},
+		{"NAME", 24},
 		{"PLATFORM", 10},
-		{"IP", 16},
+		{"PRIVATE IP", 16},
+		{"PUBLIC IP", 16},
 	}
 }
 
@@ -59,7 +60,7 @@ func (r *EC2Resource) HandleMsg(msg tea.Msg) bool {
 func (r *EC2Resource) Rows() []table.Row {
 	rows := make([]table.Row, len(r.instances))
 	for i, inst := range r.instances {
-		rows[i] = table.Row{inst.ID, inst.Name, inst.Platform, inst.IPAddress}
+		rows[i] = table.Row{inst.ID, inst.Name, inst.Platform, inst.PrivateIP, inst.PublicIP}
 	}
 	return rows
 }

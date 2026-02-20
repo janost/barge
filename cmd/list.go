@@ -76,9 +76,9 @@ func runList(cmd *cobra.Command, args []string) error {
 			if ecsRendered {
 				fmt.Fprintln(w) // blank line separator between sections
 			}
-			fmt.Fprintln(w, "INSTANCE\tNAME\tPLATFORM\tIP")
+			fmt.Fprintln(w, "INSTANCE\tNAME\tPLATFORM\tPRIVATE IP\tPUBLIC IP")
 			for _, inst := range instances {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", inst.ID, inst.Name, inst.Platform, inst.IPAddress)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", inst.ID, inst.Name, inst.Platform, inst.PrivateIP, inst.PublicIP)
 			}
 		}
 	}

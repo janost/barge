@@ -34,8 +34,11 @@ func (i InstanceItem) Description() string {
 	if i.Info.Platform != "" {
 		parts = append(parts, i.Info.Platform)
 	}
-	if i.Info.IPAddress != "" {
-		parts = append(parts, i.Info.IPAddress)
+	if i.Info.PrivateIP != "" {
+		parts = append(parts, i.Info.PrivateIP)
+	}
+	if i.Info.PublicIP != "" {
+		parts = append(parts, i.Info.PublicIP)
 	}
 	return strings.Join(parts, " | ")
 }

@@ -15,7 +15,8 @@ type InstanceInfo struct {
 	ID           string
 	Name         string
 	Platform     string
-	IPAddress    string
+	PrivateIP    string
+	PublicIP     string // empty if no public IP assigned
 	ComputerName string
 }
 
@@ -46,14 +47,14 @@ func (c *Client) ListInstances(ctx context.Context) ([]InstanceInfo, error) {
 			instances = append(instances, InstanceInfo{
 				ID:           id,
 				Platform:     string(inst.PlatformType),
-				IPAddress:    awssdk.ToString(inst.IPAddress),
+				PrivateIP:    awssdk.ToString(inst.IPAddress),
 				ComputerName: awssdk.ToString(inst.ComputerName),
 			})
 		}
 	}
 
-	// Enrich with EC2 Name tags (best-effort)
-	instances = c.enrichInstanceNames(ctx, instances)
+	// Enrich with EC2 Name tags and IP addresses (best-effort)
+	instances = c.enrichInstances(ctx, instances)
 
 	sort.Slice(instances, func(i, j int) bool {
 		// Named instances first, then by name, then by ID
@@ -69,7 +70,7 @@ func (c *Client) ListInstances(ctx context.Context) ([]InstanceInfo, error) {
 	return instances, nil
 }
 
-func (c *Client) enrichInstanceNames(ctx context.Context, instances []InstanceInfo) []InstanceInfo {
+func (c *Client) enrichInstances(ctx context.Context, instances []InstanceInfo) []InstanceInfo {
 	if len(instances) == 0 {
 		return instances
 	}
@@ -79,29 +80,40 @@ func (c *Client) enrichInstanceNames(ctx context.Context, instances []InstanceIn
 		ids[i] = inst.ID
 	}
 
-	// EC2 DescribeInstances accepts up to 1000 instance IDs
 	out, err := c.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		InstanceIds: ids,
 	})
 	if err != nil {
-		// Best-effort: if we lack permissions, just skip name enrichment
 		return instances
 	}
 
-	nameMap := make(map[string]string)
-	for _, res := range out.Reservations {
-		for _, inst := range res.Instances {
-			id := awssdk.ToString(inst.InstanceId)
-			for _, tag := range inst.Tags {
-				if awssdk.ToString(tag.Key) == "Name" {
-					nameMap[id] = awssdk.ToString(tag.Value)
-					break
+	type enrichment struct {
+		name      string
+		privateIP string
+		publicIP  string
+	}
+	enrichMap := make(map[string]enrichment)
+
+	collect := func(out *ec2.DescribeInstancesOutput) {
+		for _, res := range out.Reservations {
+			for _, inst := range res.Instances {
+				id := awssdk.ToString(inst.InstanceId)
+				e := enrichment{
+					privateIP: awssdk.ToString(inst.PrivateIpAddress),
+					publicIP:  awssdk.ToString(inst.PublicIpAddress),
 				}
+				for _, tag := range inst.Tags {
+					if awssdk.ToString(tag.Key) == "Name" {
+						e.name = awssdk.ToString(tag.Value)
+						break
+					}
+				}
+				enrichMap[id] = e
 			}
 		}
 	}
 
-	// Handle pagination for large instance lists
+	collect(out)
 	for out.NextToken != nil {
 		out, err = c.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 			InstanceIds: ids,
@@ -110,22 +122,16 @@ func (c *Client) enrichInstanceNames(ctx context.Context, instances []InstanceIn
 		if err != nil {
 			break
 		}
-		for _, res := range out.Reservations {
-			for _, inst := range res.Instances {
-				id := awssdk.ToString(inst.InstanceId)
-				for _, tag := range inst.Tags {
-					if awssdk.ToString(tag.Key) == "Name" {
-						nameMap[id] = awssdk.ToString(tag.Value)
-						break
-					}
-				}
-			}
-		}
+		collect(out)
 	}
 
 	for i := range instances {
-		if name, ok := nameMap[instances[i].ID]; ok {
-			instances[i].Name = name
+		if e, ok := enrichMap[instances[i].ID]; ok {
+			instances[i].Name = e.name
+			if e.privateIP != "" {
+				instances[i].PrivateIP = e.privateIP
+			}
+			instances[i].PublicIP = e.publicIP
 		}
 	}
 
