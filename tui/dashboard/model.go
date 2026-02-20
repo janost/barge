@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type state int
@@ -319,9 +320,10 @@ func (m Model) View() string {
 	case stateLoading:
 		content = statusStyle.Render("Loading...")
 	case stateActions:
+		bg := m.table.View()
 		popup := m.renderActionPopup()
-		contentH := m.height - 2 // match panel inner height
-		content = lipgloss.Place(m.width-2, contentH, lipgloss.Center, lipgloss.Center, popup)
+		bgH := strings.Count(bg, "\n") + 1
+		content = overlayCenter(bg, popup, m.width-2, bgH)
 	default:
 		if err := m.currentResource().Error(); err != nil {
 			content = errorStyle.Render("Error: " + err.Error())
@@ -339,6 +341,33 @@ func (m Model) View() string {
 	}
 
 	return panel
+}
+
+func overlayCenter(bg, fg string, bgW, bgH int) string {
+	bgLines := strings.Split(bg, "\n")
+	fgLines := strings.Split(fg, "\n")
+
+	fgW := lipgloss.Width(fg)
+	fgH := len(fgLines)
+
+	x := max((bgW-fgW)/2, 0)
+	y := max((bgH-fgH)/2, 0)
+
+	for i, fgLine := range fgLines {
+		row := y + i
+		if row >= len(bgLines) {
+			break
+		}
+		left := ansi.Truncate(bgLines[row], x, "")
+		leftW := lipgloss.Width(left)
+		if leftW < x {
+			left += strings.Repeat(" ", x-leftW)
+		}
+		right := ansi.TruncateLeft(bgLines[row], x+lipgloss.Width(fgLine), "")
+		bgLines[row] = left + "\x1b[m" + fgLine + "\x1b[m" + right
+	}
+
+	return strings.Join(bgLines, "\n")
 }
 
 func (m Model) renderActionPopup() string {
