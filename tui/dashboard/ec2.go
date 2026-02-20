@@ -16,19 +16,24 @@ type ec2FetchMsg struct {
 	err       error
 }
 
-// EC2Resource provides the EC2 instances view.
-type EC2Resource struct {
-	instances []bargeaws.InstanceInfo
-	err       error
+// EC2InstanceResource provides the EC2 instances view.
+type EC2InstanceResource struct {
+	instances   []bargeaws.InstanceInfo
+	err         error
+	instanceIDs []string // optional: only show these instances (e.g. ASG members)
 }
 
-func NewEC2Resource() *EC2Resource {
-	return &EC2Resource{}
+func NewEC2InstanceResource() *EC2InstanceResource {
+	return &EC2InstanceResource{}
 }
 
-func (r *EC2Resource) Name() string { return "EC2 Instances" }
+func NewEC2InstanceResourceForIDs(ids []string) *EC2InstanceResource {
+	return &EC2InstanceResource{instanceIDs: ids}
+}
 
-func (r *EC2Resource) Columns() []Column {
+func (r *EC2InstanceResource) Name() string { return "EC2 Instances" }
+
+func (r *EC2InstanceResource) Columns() []Column {
 	return []Column{
 		{"INSTANCE", 20},
 		{"NAME", 24},
@@ -38,14 +43,27 @@ func (r *EC2Resource) Columns() []Column {
 	}
 }
 
-func (r *EC2Resource) FetchCmd(client *bargeaws.Client) tea.Cmd {
+func (r *EC2InstanceResource) FetchCmd(client *bargeaws.Client) tea.Cmd {
 	return func() tea.Msg {
 		instances, err := client.ListInstances(context.Background())
+		if err == nil && len(r.instanceIDs) > 0 {
+			idSet := make(map[string]bool, len(r.instanceIDs))
+			for _, id := range r.instanceIDs {
+				idSet[id] = true
+			}
+			var filtered []bargeaws.InstanceInfo
+			for _, inst := range instances {
+				if idSet[inst.ID] {
+					filtered = append(filtered, inst)
+				}
+			}
+			instances = filtered
+		}
 		return ec2FetchMsg{instances, err}
 	}
 }
 
-func (r *EC2Resource) HandleMsg(msg tea.Msg) bool {
+func (r *EC2InstanceResource) HandleMsg(msg tea.Msg) bool {
 	if m, ok := msg.(ec2FetchMsg); ok {
 		r.err = m.err
 		if m.err == nil {
@@ -57,7 +75,7 @@ func (r *EC2Resource) HandleMsg(msg tea.Msg) bool {
 	return false
 }
 
-func (r *EC2Resource) Rows() []table.Row {
+func (r *EC2InstanceResource) Rows() []table.Row {
 	rows := make([]table.Row, len(r.instances))
 	for i, inst := range r.instances {
 		rows[i] = table.Row{inst.ID, inst.Name, inst.Platform, inst.PrivateIP, inst.PublicIP}
@@ -65,7 +83,7 @@ func (r *EC2Resource) Rows() []table.Row {
 	return rows
 }
 
-func (r *EC2Resource) Actions(row table.Row) []Action {
+func (r *EC2InstanceResource) Actions(row table.Row) []Action {
 	if len(row) == 0 {
 		return nil
 	}
@@ -101,6 +119,6 @@ func (r *EC2Resource) Actions(row table.Row) []Action {
 	}
 }
 
-func (r *EC2Resource) Error() error {
+func (r *EC2InstanceResource) Error() error {
 	return r.err
 }

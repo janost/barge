@@ -30,7 +30,7 @@ func runTUICmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	resource := dashboard.NewEC2Resource()
+	resource := dashboard.NewEC2InstanceResource()
 	model := dashboard.New(client, resource)
 
 	p := tea.NewProgram(model, tea.WithAltScreen())
