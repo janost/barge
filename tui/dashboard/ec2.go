@@ -3,6 +3,7 @@ package dashboard
 
 import (
 	"context"
+	"fmt"
 	osexec "os/exec"
 
 	bargeaws "github.com/janost/barge/aws"
@@ -72,7 +73,8 @@ func (r *EC2Resource) Actions(row table.Row) []Action {
 		{
 			Name: "SSM Shell",
 			Run: func() tea.Cmd {
-				c := osexec.Command("aws", "ssm", "start-session", "--target", instanceID)
+				c := osexec.Command("sh", "-c",
+				fmt.Sprintf("clear && exec aws ssm start-session --target %s", instanceID))
 				return tea.ExecProcess(c, func(err error) tea.Msg {
 					return processExitMsg{err}
 				})
