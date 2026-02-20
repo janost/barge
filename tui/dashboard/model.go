@@ -180,6 +180,21 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key == m.config.Keybinds.Search:
 		m.searching = true
 		return m, nil
+	case key == m.config.Keybinds.DrillAlt:
+		row := m.table.SelectedRow()
+		if row == nil {
+			return m, nil
+		}
+		if sd, ok := m.currentResource().(SecondaryDrillable); ok {
+			label, child := sd.SecondaryChildResource(row)
+			m.resourceStack = append(m.resourceStack, child)
+			m.breadcrumbs = append(m.breadcrumbs, label)
+			m.reconfigureTable(child)
+			m.searchQuery = ""
+			m.state = stateLoading
+			return m, child.FetchCmd(m.client)
+		}
+		return m, nil
 	case key == "enter":
 		row := m.table.SelectedRow()
 		if row == nil {
