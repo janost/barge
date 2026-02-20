@@ -36,6 +36,7 @@ type escScanner struct {
 	state  int    // 0=normal, 1=ESC, 2=CSI
 	normal []byte // accumulated normal bytes for bulk write
 	redraw func()
+	repair func()
 }
 
 func (s *escScanner) Write(p []byte) (int, error) {
@@ -90,9 +91,17 @@ func (s *escScanner) flushNormal() {
 func (s *escScanner) handleCSI(final byte) {
 	params := string(s.buf)
 	switch {
-	case final == 'J' && (params == "2" || params == "3"):
-		// ED 2 (erase display) or ED 3 (erase scrollback) — redraw
-		s.redraw()
+	case final == 'J':
+		if params == "2" || params == "3" {
+			// ED 2/3: full clear — full redraw
+			s.redraw()
+		} else {
+			// ED 0/1: partial clear — pass through, then repair borders
+			s.out.Write([]byte{0x1b, '['})
+			s.out.Write(s.buf)
+			s.out.Write([]byte{final})
+			s.repair()
+		}
 	case final == 'r' && params == "":
 		// DECSTBM reset (no params) — redraw to re-apply scroll region
 		s.redraw()
@@ -118,10 +127,21 @@ func (b *BorderedExec) fullRedraw(w, h int) {
 	fmt.Fprint(b.stdout, "\x1b[H")           // cursor to scroll region origin
 }
 
+func (b *BorderedExec) repairBorders(w, h int) {
+	fmt.Fprint(b.stdout, "\x1b7")              // save cursor (DECSC)
+	fmt.Fprint(b.stdout, "\x1b[?6l")           // disable DECOM for absolute positioning
+	b.drawTopBorder(w)
+	b.drawBottomBorder(w, h)
+	fmt.Fprintf(b.stdout, "\x1b[2;%dr", h-1)   // re-apply scroll region
+	fmt.Fprint(b.stdout, "\x1b[?6h")           // re-enable DECOM
+	fmt.Fprint(b.stdout, "\x1b8")              // restore cursor (DECRC)
+}
+
 func (b *BorderedExec) scanAndForward(ptmx *os.File, w, h int) {
 	scanner := &escScanner{
 		out:    b.stdout,
 		redraw: func() { b.fullRedraw(w, h) },
+		repair: func() { b.repairBorders(w, h) },
 	}
 	buf := make([]byte, 4096)
 	for {
