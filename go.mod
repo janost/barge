@@ -1,4 +1,4 @@
-module github.com/MutuallyAssuredDeployment/barge
+module github.com/janost/barge
 
 go 1.25.6
 

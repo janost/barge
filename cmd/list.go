@@ -6,7 +6,7 @@ import (
 	"os"
 	"text/tabwriter"
 
-	bargeaws "github.com/MutuallyAssuredDeployment/barge/aws"
+	bargeaws "github.com/janost/barge/aws"
 	"github.com/spf13/cobra"
 )
 

@@ -5,7 +5,7 @@ import (
 	"context"
 	osexec "os/exec"
 
-	bargeaws "github.com/MutuallyAssuredDeployment/barge/aws"
+	bargeaws "github.com/janost/barge/aws"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 )

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	bargeaws "github.com/MutuallyAssuredDeployment/barge/aws"
+	bargeaws "github.com/janost/barge/aws"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"

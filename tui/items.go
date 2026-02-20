@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	bargeaws "github.com/MutuallyAssuredDeployment/barge/aws"
+	bargeaws "github.com/janost/barge/aws"
 )
 
 // ModeItem implements list.Item for target type selection (ECS/EC2).

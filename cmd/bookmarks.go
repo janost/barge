@@ -5,7 +5,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/MutuallyAssuredDeployment/barge/config"
+	"github.com/janost/barge/config"
 	"github.com/spf13/cobra"
 )
 

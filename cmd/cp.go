@@ -6,9 +6,9 @@ import (
 	"os"
 	"strings"
 
-	bargeaws "github.com/MutuallyAssuredDeployment/barge/aws"
-	"github.com/MutuallyAssuredDeployment/barge/exec"
-	"github.com/MutuallyAssuredDeployment/barge/tui"
+	bargeaws "github.com/janost/barge/aws"
+	"github.com/janost/barge/exec"
+	"github.com/janost/barge/tui"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 )

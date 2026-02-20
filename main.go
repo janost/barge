@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/MutuallyAssuredDeployment/barge/cmd"
+	"github.com/janost/barge/cmd"
 )
 
 var version = "dev"
