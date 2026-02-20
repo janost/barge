@@ -50,7 +50,7 @@ func runConnect(cmd *cobra.Command, args []string) error {
 			InstanceID: bm.InstanceID,
 			Timestamp:  time.Now(),
 		})
-		fmt.Fprintf(os.Stderr, "Connecting to EC2 instance: %s\n", bm.InstanceID)
+		printEC2ConnectInfo(bm.InstanceID)
 		return exec.ExecSSM(bm.InstanceID)
 	}
 

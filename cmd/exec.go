@@ -55,12 +55,39 @@ func runExec(cmd *cobra.Command, args []string) error {
 	return runExecTUI()
 }
 
+func printEC2ConnectInfo(instanceID string) {
+	ctx := context.Background()
+	client, err := bargeaws.NewClient(ctx, profile, region)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Connecting to EC2 instance: %s\n", instanceID)
+		return
+	}
+	info, err := client.LookupInstance(ctx, instanceID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Connecting to EC2 instance: %s\n", instanceID)
+		return
+	}
+	msg := "Connecting to EC2 instance: "
+	if info.Name != "" {
+		msg += info.Name + " (" + info.ID + ")"
+	} else {
+		msg += info.ID
+	}
+	if info.PrivateIP != "" {
+		msg += " │ " + info.PrivateIP
+	}
+	if info.PublicIP != "" {
+		msg += " │ " + info.PublicIP
+	}
+	fmt.Fprintln(os.Stderr, msg)
+}
+
 func runDirectSSM() error {
 	if dryRun {
 		fmt.Fprintf(os.Stdout, "aws ssm start-session --target %s\n", instance)
 		return nil
 	}
-	fmt.Fprintf(os.Stderr, "Connecting to EC2 instance: %s\n", instance)
+	printEC2ConnectInfo(instance)
 	_ = config.AppendHistory(config.HistoryEntry{
 		Mode:       "ec2",
 		InstanceID: instance,
@@ -151,7 +178,7 @@ func runExecTUI() error {
 			fmt.Fprintf(os.Stdout, "aws ssm start-session --target %s\n", sel.InstanceID)
 			return nil
 		}
-		fmt.Fprintf(os.Stderr, "Connecting to EC2 instance: %s\n", sel.InstanceID)
+		printEC2ConnectInfo(sel.InstanceID)
 		_ = config.AppendHistory(config.HistoryEntry{
 			Mode:       "ec2",
 			InstanceID: sel.InstanceID,
