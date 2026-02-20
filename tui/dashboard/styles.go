@@ -18,6 +18,10 @@ var (
 	actionNormalStyle = lipgloss.NewStyle().PaddingLeft(2)
 	borderFg          = lipgloss.Color("8")
 	sepStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	popupStyle        = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("6")).
+				Padding(0, 2)
 )
 
 func tableStyles() table.Styles {

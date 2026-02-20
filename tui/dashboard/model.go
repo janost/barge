@@ -319,7 +319,9 @@ func (m Model) View() string {
 	case stateLoading:
 		content = statusStyle.Render("Loading...")
 	case stateActions:
-		content = m.renderActions()
+		popup := m.renderActionPopup()
+		contentH := m.height - 2 // match panel inner height
+		content = lipgloss.Place(m.width-2, contentH, lipgloss.Center, lipgloss.Center, popup)
 	default:
 		if err := m.currentResource().Error(); err != nil {
 			content = errorStyle.Render("Error: " + err.Error())
@@ -339,14 +341,17 @@ func (m Model) View() string {
 	return panel
 }
 
-func (m Model) renderActions() string {
+func (m Model) renderActionPopup() string {
 	var b strings.Builder
 	for i, action := range m.actions {
 		if i == m.actionIdx {
-			b.WriteString(actionCursorStyle.Render("  ▸ "+action.Name) + "\n")
+			b.WriteString(actionCursorStyle.Render("▸ " + action.Name))
 		} else {
-			b.WriteString(actionNormalStyle.Render("  "+action.Name) + "\n")
+			b.WriteString(actionNormalStyle.Render("  " + action.Name))
+		}
+		if i < len(m.actions)-1 {
+			b.WriteString("\n")
 		}
 	}
-	return b.String()
+	return popupStyle.Render(b.String())
 }
