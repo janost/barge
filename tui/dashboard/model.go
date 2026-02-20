@@ -11,7 +11,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/sahilm/fuzzy"
 )
 
 type state int
@@ -271,30 +270,18 @@ func (m *Model) applySearch() {
 		m.table.SetRows(allRows)
 		return
 	}
-	targets := make([]string, len(allRows))
-	for i, row := range allRows {
-		targets[i] = strings.Join(row, " ")
-	}
-	// Each term must independently fuzzy-match against the row
-	matched := make([]bool, len(allRows))
-	for i := range matched {
-		matched[i] = true
-	}
-	for _, term := range terms {
-		termMatches := make(map[int]bool)
-		for _, r := range fuzzy.Find(term, targets) {
-			termMatches[r.Index] = true
-		}
-		for i := range matched {
-			if !termMatches[i] {
-				matched[i] = false
+	var filtered []table.Row
+	for _, row := range allRows {
+		target := strings.ToLower(strings.Join(row, " "))
+		match := true
+		for _, term := range terms {
+			if !strings.Contains(target, strings.ToLower(term)) {
+				match = false
+				break
 			}
 		}
-	}
-	var filtered []table.Row
-	for i, ok := range matched {
-		if ok {
-			filtered = append(filtered, allRows[i])
+		if match {
+			filtered = append(filtered, row)
 		}
 	}
 	m.table.SetRows(filtered)
