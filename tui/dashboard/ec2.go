@@ -3,10 +3,8 @@ package dashboard
 
 import (
 	"context"
-	osexec "os/exec"
 
 	bargeaws "github.com/janost/barge/aws"
-	bargeexec "github.com/janost/barge/exec"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -106,17 +104,7 @@ func (r *EC2InstanceResource) Actions(row table.Row) []Action {
 		title += " │ " + publicIP
 	}
 
-	return []Action{
-		{
-			Name: "SSM Shell",
-			Run: func() tea.Cmd {
-				c := osexec.Command("aws", "ssm", "start-session", "--target", instanceID)
-				return tea.Exec(&bargeexec.BorderedExec{Title: title, Cmd: c}, func(err error) tea.Msg {
-					return processExitMsg{err}
-				})
-			},
-		},
-	}
+	return []Action{SSMShellAction(instanceID, title)}
 }
 
 func (r *EC2InstanceResource) Error() error {
