@@ -137,3 +137,32 @@ func (c *Client) enrichInstances(ctx context.Context, instances []InstanceInfo) 
 
 	return instances
 }
+
+// LookupInstance fetches info for a single EC2 instance by ID.
+func (c *Client) LookupInstance(ctx context.Context, instanceID string) (InstanceInfo, error) {
+	out, err := c.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		InstanceIds: []string{instanceID},
+	})
+	if err != nil {
+		return InstanceInfo{}, fmt.Errorf("describing instance %s: %w", instanceID, err)
+	}
+
+	for _, res := range out.Reservations {
+		for _, inst := range res.Instances {
+			info := InstanceInfo{
+				ID:        awssdk.ToString(inst.InstanceId),
+				PrivateIP: awssdk.ToString(inst.PrivateIpAddress),
+				PublicIP:  awssdk.ToString(inst.PublicIpAddress),
+			}
+			for _, tag := range inst.Tags {
+				if awssdk.ToString(tag.Key) == "Name" {
+					info.Name = awssdk.ToString(tag.Value)
+					break
+				}
+			}
+			return info, nil
+		}
+	}
+
+	return InstanceInfo{}, fmt.Errorf("instance %s not found", instanceID)
+}
