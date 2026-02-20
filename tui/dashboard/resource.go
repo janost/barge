@@ -19,6 +19,16 @@ type Action struct {
 	Run  func() tea.Cmd
 }
 
+// Drillable is optionally implemented by Resources that support drill-down.
+// When Enter is pressed on a Drillable resource, ChildResource is called
+// instead of showing the action menu.
+type Drillable interface {
+	ChildResource(row table.Row) (label string, child Resource)
+}
+
+// processExitMsg is sent when a subprocess (e.g. SSM shell) completes.
+type processExitMsg struct{ err error }
+
 // Resource defines a browsable resource type for the dashboard.
 type Resource interface {
 	// Name returns the display name (e.g. "EC2 Instances").

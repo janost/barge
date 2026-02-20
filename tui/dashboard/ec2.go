@@ -15,9 +15,6 @@ type ec2FetchMsg struct {
 	err       error
 }
 
-// processExitMsg is sent when a subprocess (e.g. SSM shell) completes.
-type processExitMsg struct{ err error }
-
 // EC2Resource provides the EC2 instances view.
 type EC2Resource struct {
 	instances []bargeaws.InstanceInfo
