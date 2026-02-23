@@ -19,6 +19,7 @@ type ECSTaskResource struct {
 	service string
 	tasks   []bargeaws.TaskInfo
 	err     error
+	client  *bargeaws.Client
 }
 
 func NewECSTaskResource(cluster, service string) *ECSTaskResource {
@@ -38,6 +39,7 @@ func (r *ECSTaskResource) Columns() []Column {
 }
 
 func (r *ECSTaskResource) FetchCmd(client *bargeaws.Client) tea.Cmd {
+	r.client = client
 	return func() tea.Msg {
 		tasks, err := client.ListTasks(context.Background(), r.cluster, r.service)
 		return ecsTaskFetchMsg{tasks, err}
@@ -82,7 +84,20 @@ func (r *ECSTaskResource) Actions(row table.Row) []Action {
 				return nil
 			}
 			title := fmt.Sprintf("ECS: %s/%s (%s)", r.service, t.ID, container.Name)
-			return []Action{ECSExecAction(r.cluster, t.ID, container.Name, title)}
+			actions := []Action{
+				ECSExecAction(r.cluster, t.ID, container.Name, title),
+			}
+			if r.client != nil {
+				taskIDCopy := t.ID
+				actions = append(actions, NewAPIAction(
+					"Restart Task",
+					func() error {
+						return r.client.StopTask(context.Background(), r.cluster, taskIDCopy, "Restarted via barge")
+					},
+					fmt.Sprintf("Task %s restart initiated", taskIDCopy),
+				))
+			}
+			return actions
 		}
 	}
 	return nil

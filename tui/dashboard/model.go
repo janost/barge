@@ -164,6 +164,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.currentResource().FetchCmd(m.client)
 
+	case apiResultMsg:
+		m.state = stateTable
+		if msg.err != nil {
+			m.message = fmt.Sprintf("Error: %v", msg.err)
+		} else {
+			m.message = msg.message
+		}
+		return m, m.currentResource().FetchCmd(m.client)
+
 	case tea.KeyMsg:
 		switch m.state {
 		case stateLoading:

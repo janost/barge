@@ -10,10 +10,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
+	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
+	"github.com/aws/aws-sdk-go-v2/service/rds"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 )
 
@@ -23,6 +26,9 @@ type Client struct {
 	ec2 *ec2.Client
 	cwl *cloudwatchlogs.Client
 	asg *autoscaling.Client
+	rds *rds.Client
+	cfn *cloudformation.Client
+	s3c *s3.Client
 }
 
 type ServiceInfo struct {
@@ -80,6 +86,9 @@ func NewClient(ctx context.Context, profile, region string) (*Client, error) {
 		ec2: ec2.NewFromConfig(cfg),
 		cwl: cloudwatchlogs.NewFromConfig(cfg),
 		asg: autoscaling.NewFromConfig(cfg),
+		rds: rds.NewFromConfig(cfg),
+		cfn: cloudformation.NewFromConfig(cfg),
+		s3c: s3.NewFromConfig(cfg),
 	}, nil
 }
 
@@ -528,6 +537,32 @@ func (c *Client) ListTaskDefinitions(ctx context.Context) ([]TaskDefInfo, error)
 		return infos[i].Family < infos[j].Family
 	})
 	return infos, nil
+}
+
+// StopTask stops a running ECS task.
+func (c *Client) StopTask(ctx context.Context, cluster, taskID, reason string) error {
+	_, err := c.ecs.StopTask(ctx, &ecs.StopTaskInput{
+		Cluster: aws.String(cluster),
+		Task:    aws.String(taskID),
+		Reason:  aws.String(reason),
+	})
+	if err != nil {
+		return fmt.Errorf("stopping task: %w", err)
+	}
+	return nil
+}
+
+// ForceNewDeployment triggers a new deployment of an ECS service.
+func (c *Client) ForceNewDeployment(ctx context.Context, cluster, service string) error {
+	_, err := c.ecs.UpdateService(ctx, &ecs.UpdateServiceInput{
+		Cluster:            aws.String(cluster),
+		Service:            aws.String(service),
+		ForceNewDeployment: true,
+	})
+	if err != nil {
+		return fmt.Errorf("forcing new deployment: %w", err)
+	}
+	return nil
 }
 
 // FindTask finds a task by ID in a slice, or returns an error.

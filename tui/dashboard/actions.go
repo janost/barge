@@ -7,6 +7,28 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// apiResultMsg is sent when an API action completes.
+type apiResultMsg struct {
+	message string
+	err     error
+}
+
+// NewAPIAction creates an action that calls an AWS API and returns a result message.
+func NewAPIAction(name string, fn func() error, successMsg string) Action {
+	return Action{
+		Name: name,
+		Run: func() tea.Cmd {
+			return func() tea.Msg {
+				err := fn()
+				if err != nil {
+					return apiResultMsg{"", err}
+				}
+				return apiResultMsg{successMsg, nil}
+			}
+		},
+	}
+}
+
 // NewExecAction creates an action that runs a subprocess in a bordered terminal.
 func NewExecAction(name, title string, cmd *osexec.Cmd) Action {
 	return Action{
