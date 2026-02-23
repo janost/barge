@@ -14,14 +14,31 @@ type ecsServiceFetchMsg struct {
 	err      error
 }
 
+type serviceDrillTarget int
+
+const (
+	drillToTasks serviceDrillTarget = iota
+	drillToStatus
+	drillToLogs
+)
+
 type ECSServiceResource struct {
-	cluster  string
-	services []bargeaws.ServiceInfo
-	err      error
+	cluster     string
+	services    []bargeaws.ServiceInfo
+	err         error
+	drillTarget serviceDrillTarget
 }
 
 func NewECSServiceResource(cluster string) *ECSServiceResource {
 	return &ECSServiceResource{cluster: cluster}
+}
+
+func NewECSServiceResourceForStatus(cluster string) *ECSServiceResource {
+	return &ECSServiceResource{cluster: cluster, drillTarget: drillToStatus}
+}
+
+func NewECSServiceResourceForLogs(cluster string) *ECSServiceResource {
+	return &ECSServiceResource{cluster: cluster, drillTarget: drillToLogs}
 }
 
 func (r *ECSServiceResource) Name() string { return "Services" }
@@ -75,5 +92,16 @@ func (r *ECSServiceResource) Actions(row table.Row) []Action { return nil }
 func (r *ECSServiceResource) Error() error { return r.err }
 
 func (r *ECSServiceResource) ChildResource(row table.Row) (string, Resource) {
-	return row[0], NewECSTaskResource(r.cluster, row[0])
+	switch r.drillTarget {
+	case drillToStatus:
+		return row[0], NewECSStatusResource(r.cluster, row[0])
+	case drillToLogs:
+		return row[0], NewECSLogsResource(r.cluster, row[0])
+	default:
+		return row[0], NewECSTaskResource(r.cluster, row[0])
+	}
+}
+
+func (r *ECSServiceResource) SecondaryChildResource(row table.Row) (string, Resource) {
+	return row[0], NewECSEventsResource(r.cluster, row[0])
 }

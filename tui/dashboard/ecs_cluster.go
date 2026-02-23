@@ -14,13 +14,30 @@ type ecsClusterFetchMsg struct {
 	err      error
 }
 
+type clusterDrillTarget int
+
+const (
+	clusterDrillToServices clusterDrillTarget = iota
+	clusterDrillToStatus
+	clusterDrillToLogs
+)
+
 type ECSClusterResource struct {
-	clusters []bargeaws.ClusterInfo
-	err      error
+	clusters    []bargeaws.ClusterInfo
+	err         error
+	drillTarget clusterDrillTarget
 }
 
 func NewECSClusterResource() *ECSClusterResource {
 	return &ECSClusterResource{}
+}
+
+func NewECSClusterResourceForStatus() *ECSClusterResource {
+	return &ECSClusterResource{drillTarget: clusterDrillToStatus}
+}
+
+func NewECSClusterResourceForLogs() *ECSClusterResource {
+	return &ECSClusterResource{drillTarget: clusterDrillToLogs}
 }
 
 func (r *ECSClusterResource) Name() string { return "ECS Clusters" }
@@ -72,7 +89,14 @@ func (r *ECSClusterResource) Actions(row table.Row) []Action { return nil }
 func (r *ECSClusterResource) Error() error { return r.err }
 
 func (r *ECSClusterResource) ChildResource(row table.Row) (string, Resource) {
-	return row[0], NewECSServiceResource(row[0])
+	switch r.drillTarget {
+	case clusterDrillToStatus:
+		return row[0], NewECSServiceResourceForStatus(row[0])
+	case clusterDrillToLogs:
+		return row[0], NewECSServiceResourceForLogs(row[0])
+	default:
+		return row[0], NewECSServiceResource(row[0])
+	}
 }
 
 // SecondaryChildResource drills into all tasks on the cluster (including standalone tasks).

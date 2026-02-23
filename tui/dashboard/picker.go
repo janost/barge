@@ -38,7 +38,12 @@ func (r *ResourcePicker) Rows() []table.Row {
 		{"EC2 Instances", "Managed instances with SSM agent"},
 		{"Auto Scaling Groups", "EC2 Auto Scaling Groups"},
 		{"ECS Clusters", "ECS clusters, services, and tasks"},
+		{"ECS Service Status", "Deployments, tasks, and recent stops"},
+		{"ECS Service Logs", "Recent CloudWatch logs for a service"},
 		{"ECS Task Definitions", "Task definition families"},
+		{"RDS Clusters", "RDS/Aurora database clusters"},
+		{"CloudFormation Stacks", "CloudFormation stack resources and events"},
+		{"S3 Buckets", "S3 bucket browser"},
 	}
 }
 
@@ -52,8 +57,18 @@ func (r *ResourcePicker) ChildResource(row table.Row) (string, Resource) {
 		return "Auto Scaling Groups", NewASGResource()
 	case "ECS Clusters":
 		return "ECS Clusters", NewECSClusterResource()
+	case "ECS Service Status":
+		return "ECS Service Status", NewECSClusterResourceForStatus()
+	case "ECS Service Logs":
+		return "ECS Service Logs", NewECSClusterResourceForLogs()
 	case "ECS Task Definitions":
 		return "ECS Task Definitions", NewECSTaskDefResource()
+	case "RDS Clusters":
+		return "RDS Clusters", NewRDSClusterResource()
+	case "CloudFormation Stacks":
+		return "CloudFormation Stacks", NewCFNStackResource()
+	case "S3 Buckets":
+		return "S3 Buckets", NewS3BucketResource()
 	default:
 		return "EC2 Instances", NewEC2InstanceResource()
 	}
