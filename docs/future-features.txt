@@ -1,0 +1,22 @@
+Future Feature Ideas
+====================
+
+Quick-access features:
+1. barge history / bookmarks — Remember recent connections, show last 10 in TUI,
+   named bookmarks for frequent targets (barge save prod-api -> barge connect prod-api)
+2. barge logs — Tail CloudWatch logs for a service/task with the same drill-down UX,
+   no more hunting for log group names and stream prefixes
+
+Operational visibility:
+3. barge status — Live TUI dashboard for a service: task health, CPU/memory utilization,
+   recent restart counts, last deployment time
+4. barge events — Show recent service events (deployment rollouts, failures, scaling)
+   in a readable timeline
+
+File operations:
+5. barge cp — Copy files to/from a container via tar-over-exec, fills the gap of
+   no native docker cp equivalent for Fargate tasks
+
+Multi-task operations:
+6. barge run — Execute a command across all tasks in a service in parallel, collect output
+7. barge restart — Force-restart a specific task or trigger new deployment for a service
