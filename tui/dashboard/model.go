@@ -3,7 +3,9 @@ package dashboard
 
 import (
 	"fmt"
+	"sort"
 	"strings"
+	"time"
 
 	bargeaws "github.com/janost/barge/aws"
 	"github.com/janost/barge/config"
@@ -13,12 +15,15 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+type autoRefreshMsg struct{}
+
 type state int
 
 const (
 	stateLoading state = iota
 	stateTable
 	stateActions
+	stateInput
 )
 
 // Model is the main dashboard Bubble Tea model.
@@ -35,6 +40,11 @@ type Model struct {
 	actions   []Action
 	actionIdx int
 
+	// Input prompt
+	inputPrompt   string
+	inputValue    string
+	inputCallback func(value string) tea.Cmd
+
 	// Layout
 	width  int
 	height int
@@ -43,11 +53,18 @@ type Model struct {
 	searching   bool
 	searchQuery string
 
+	// Sorting
+	sortCol int  // -1 means no sort active
+	sortAsc bool
+
 	// Status
 	message string
 
 	// Config
 	config config.Config
+
+	// Auto-refresh
+	refreshInterval time.Duration
 }
 
 func (m *Model) currentResource() Resource {
@@ -70,14 +87,22 @@ func New(client *bargeaws.Client, resource Resource, cfg config.Config) Model {
 	)
 	t.SetStyles(tableStyles())
 
+	var refreshInterval time.Duration
+	if cfg.RefreshInterval > 0 {
+		refreshInterval = time.Duration(cfg.RefreshInterval) * time.Second
+	}
+
 	return Model{
-		client:        client,
-		resourceStack: []Resource{resource},
-		breadcrumbs:   []string{resource.Name()},
-		baseColumns:   columns,
-		table:         t,
-		state:         stateLoading,
-		config:        cfg,
+		client:          client,
+		resourceStack:   []Resource{resource},
+		breadcrumbs:     []string{resource.Name()},
+		baseColumns:     columns,
+		table:           t,
+		state:           stateLoading,
+		sortCol:         -1,
+		sortAsc:         true,
+		config:          cfg,
+		refreshInterval: refreshInterval,
 	}
 }
 
@@ -114,6 +139,8 @@ func (m *Model) drillDown(label string, child Resource) {
 	m.resourceStack = append(m.resourceStack, child)
 	m.reconfigureTable(child)
 	m.searchQuery = ""
+	m.sortCol = -1
+	m.sortAsc = true
 	m.state = stateLoading
 }
 
@@ -125,6 +152,8 @@ func (m *Model) drillBack() {
 	parent := m.currentResource()
 	m.reconfigureTable(parent)
 	m.table.SetRows(parent.Rows())
+	m.sortCol = -1
+	m.sortAsc = true
 	m.state = stateTable
 	m.message = ""
 }
@@ -141,8 +170,32 @@ func (m *Model) reconfigureTable(res Resource) {
 	m.resizeColumns()
 }
 
+type tailTickMsg struct{}
+
+func (m *Model) scheduleTail() tea.Cmd {
+	if t, ok := m.currentResource().(Tailable); ok {
+		return tea.Tick(t.TailInterval(), func(time.Time) tea.Msg {
+			return tailTickMsg{}
+		})
+	}
+	return nil
+}
+
+func (m *Model) scheduleRefresh() tea.Cmd {
+	if m.refreshInterval <= 0 {
+		return nil
+	}
+	return tea.Tick(m.refreshInterval, func(t time.Time) tea.Msg {
+		return autoRefreshMsg{}
+	})
+}
+
 func (m Model) Init() tea.Cmd {
-	return m.currentResource().FetchCmd(m.client)
+	return tea.Batch(
+		m.currentResource().FetchCmd(m.client),
+		m.scheduleRefresh(),
+		m.scheduleTail(),
+	)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -173,6 +226,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.currentResource().FetchCmd(m.client)
 
+	case inputRequestMsg:
+		m.state = stateInput
+		m.inputPrompt = msg.prompt
+		m.inputValue = ""
+		m.inputCallback = msg.callback
+		return m, nil
+
+	case autoRefreshMsg:
+		if m.state == stateTable || m.state == stateLoading {
+			return m, tea.Batch(
+				m.currentResource().FetchCmd(m.client),
+				m.scheduleRefresh(),
+			)
+		}
+		// Reschedule even in actions state, but don't fetch
+		return m, m.scheduleRefresh()
+
+	case tailTickMsg:
+		if m.state == stateTable || m.state == stateLoading {
+			return m, tea.Batch(
+				m.currentResource().FetchCmd(m.client),
+				m.scheduleTail(),
+			)
+		}
+		return m, m.scheduleTail()
+
 	case tea.KeyMsg:
 		switch m.state {
 		case stateLoading:
@@ -183,12 +262,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateTable(msg)
 		case stateActions:
 			return m.updateActions(msg)
+		case stateInput:
+			return m.updateInput(msg)
 		}
 	}
 
 	// Let resource handle data messages
 	if m.currentResource().HandleMsg(msg) {
 		m.table.SetRows(m.currentResource().Rows())
+		m.applySearch() // preserve active search filter
 		m.state = stateTable
 		m.message = ""
 		return m, nil
@@ -222,7 +304,7 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if sd, ok := m.currentResource().(SecondaryDrillable); ok {
 			label, child := sd.SecondaryChildResource(row)
 			m.drillDown(label, child)
-			return m, child.FetchCmd(m.client)
+			return m, tea.Batch(child.FetchCmd(m.client), m.scheduleTail())
 		}
 		return m, nil
 	case key == "enter":
@@ -233,7 +315,7 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if drillable, ok := m.currentResource().(Drillable); ok {
 			label, child := drillable.ChildResource(row)
 			m.drillDown(label, child)
-			return m, child.FetchCmd(m.client)
+			return m, tea.Batch(child.FetchCmd(m.client), m.scheduleTail())
 		}
 		m.actions = m.currentResource().Actions(row)
 		m.actionIdx = 0
@@ -249,6 +331,40 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.drillBack()
 			return m, nil
 		}
+		return m, nil
+	case key == m.config.Keybinds.Sort:
+		if m.sortCol == -1 {
+			// First press: sort by first column ascending
+			m.sortCol = 0
+			m.sortAsc = true
+		} else {
+			if m.sortAsc {
+				// Second press on same: reverse
+				m.sortAsc = false
+			} else {
+				// Third press: move to next column
+				m.sortCol++
+				m.sortAsc = true
+				if m.sortCol >= len(m.baseColumns) {
+					// Wrap around disables sort
+					m.sortCol = -1
+				}
+			}
+		}
+		m.applySortAndSearch()
+		return m, nil
+	case key == m.config.Keybinds.Actions:
+		row := m.table.SelectedRow()
+		if row == nil {
+			return m, nil
+		}
+		actions := m.currentResource().Actions(row)
+		if len(actions) == 0 {
+			return m, nil
+		}
+		m.actions = actions
+		m.actionIdx = 0
+		m.state = stateActions
 		return m, nil
 	case key == m.config.Keybinds.Refresh:
 		m.state = stateLoading
@@ -295,31 +411,72 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) applySearch() {
-	allRows := m.currentResource().Rows()
-	if m.searchQuery == "" {
-		m.table.SetRows(allRows)
-		return
-	}
-	terms := strings.Fields(m.searchQuery)
-	if len(terms) == 0 {
-		m.table.SetRows(allRows)
-		return
-	}
-	var filtered []table.Row
-	for _, row := range allRows {
-		target := strings.ToLower(strings.Join(row, " "))
-		match := true
-		for _, term := range terms {
-			if !strings.Contains(target, strings.ToLower(term)) {
-				match = false
-				break
+	m.applySortAndSearch()
+}
+
+func (m *Model) applySortAndSearch() {
+	rows := m.currentResource().Rows()
+
+	// Apply search filter first
+	if m.searchQuery != "" {
+		terms := strings.Fields(m.searchQuery)
+		var filtered []table.Row
+		for _, row := range rows {
+			target := strings.ToLower(strings.Join(row, " "))
+			match := true
+			for _, term := range terms {
+				if !strings.Contains(target, strings.ToLower(term)) {
+					match = false
+					break
+				}
+			}
+			if match {
+				filtered = append(filtered, row)
 			}
 		}
-		if match {
-			filtered = append(filtered, row)
-		}
+		rows = filtered
 	}
-	m.table.SetRows(filtered)
+
+	// Apply sort
+	if m.sortCol >= 0 && m.sortCol < len(m.baseColumns) {
+		col := m.sortCol
+		asc := m.sortAsc
+		sort.SliceStable(rows, func(i, j int) bool {
+			if asc {
+				return rows[i][col] < rows[j][col]
+			}
+			return rows[i][col] > rows[j][col]
+		})
+	}
+
+	m.table.SetRows(rows)
+}
+
+func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "esc":
+		m.state = stateTable
+		return m, nil
+	case "enter":
+		m.state = stateTable
+		if m.inputCallback != nil && m.inputValue != "" {
+			return m, m.inputCallback(m.inputValue)
+		}
+		return m, nil
+	case "backspace":
+		if len(m.inputValue) > 0 {
+			m.inputValue = m.inputValue[:len(m.inputValue)-1]
+		}
+		return m, nil
+	case "ctrl+c":
+		return m, tea.Quit
+	default:
+		if len(key) == 1 && key[0] >= '0' && key[0] <= '9' {
+			m.inputValue += key
+		}
+		return m, nil
+	}
 }
 
 func (m Model) updateActions(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -420,8 +577,15 @@ func (m Model) View() string {
 			title += sepStyle.Render(" ▸ ") + selectedStyle.Render(row[0])
 		}
 	} else {
-		count := len(m.currentResource().Rows())
+		count := len(m.table.Rows())
 		title += "  " + countStyle.Render(fmt.Sprintf("[%d]", count))
+		if m.sortCol >= 0 && m.sortCol < len(m.baseColumns) {
+			arrow := "↑"
+			if !m.sortAsc {
+				arrow = "↓"
+			}
+			title += "  " + countStyle.Render(m.baseColumns[m.sortCol].Title+arrow)
+		}
 	}
 
 	// Build shortcuts
@@ -433,15 +597,30 @@ func (m Model) View() string {
 	} else if m.state == stateActions {
 		shortcuts = shortcutStyle.Render("Enter:Select  Esc:Back")
 	} else {
-		searchKey := m.config.Keybinds.Search
-		var altDrill string
-		if _, ok := m.currentResource().(SecondaryDrillable); ok {
-			altDrill = "  " + m.config.Keybinds.DrillAlt + ":Alt-Drill"
-		}
-		nav := "↑↓:Navigate  Enter:Select" + altDrill + "  " + searchKey + ":Search  r:Refresh  q:Quit"
+		var parts []string
+		parts = append(parts, "↑↓:Navigate", "Enter:Select")
 		if len(m.resourceStack) > 1 {
-			nav = "↑↓:Navigate  Enter:Select  Esc:Back" + altDrill + "  " + searchKey + ":Search  r:Refresh  q:Quit"
+			parts = append(parts, "Esc:Back")
 		}
+		if _, ok := m.currentResource().(SecondaryDrillable); ok {
+			parts = append(parts, m.config.Keybinds.DrillAlt+":Alt-Drill")
+		}
+		if row := m.table.SelectedRow(); row != nil {
+			actions := m.currentResource().Actions(row)
+			if len(actions) > 0 {
+				parts = append(parts, m.config.Keybinds.Actions+":Actions")
+			}
+		}
+		parts = append(parts,
+			m.config.Keybinds.Sort+":Sort",
+			m.config.Keybinds.Search+":Search",
+			m.config.Keybinds.Refresh+":Refresh",
+			m.config.Keybinds.Quit+":Quit",
+		)
+		if m.refreshInterval > 0 {
+			parts = append(parts, fmt.Sprintf("⟳%ds", int(m.refreshInterval.Seconds())))
+		}
+		nav := strings.Join(parts, "  ")
 		if m.searchQuery != "" {
 			shortcuts = searchStyle.Render("["+m.searchQuery+"]") + "  " + shortcutStyle.Render(nav)
 		} else {
@@ -457,6 +636,11 @@ func (m Model) View() string {
 	case stateActions:
 		bg := m.table.View()
 		popup := m.renderActionPopup()
+		bgH := strings.Count(bg, "\n") + 1
+		content = overlayCenter(bg, popup, m.width-2, bgH)
+	case stateInput:
+		bg := m.table.View()
+		popup := m.renderInputPopup()
 		bgH := strings.Count(bg, "\n") + 1
 		content = overlayCenter(bg, popup, m.width-2, bgH)
 	default:
@@ -503,6 +687,13 @@ func overlayCenter(bg, fg string, bgW, bgH int) string {
 	}
 
 	return strings.Join(bgLines, "\n")
+}
+
+func (m Model) renderInputPopup() string {
+	cursor := "█"
+	text := m.inputPrompt + "\n\n  " + m.inputValue + cursor + "\n\n" +
+		shortcutStyle.Render("Enter:Confirm  Esc:Cancel")
+	return popupStyle.Render(text)
 }
 
 func (m Model) renderActionPopup() string {

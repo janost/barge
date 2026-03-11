@@ -61,6 +61,13 @@ func (r *ECSTaskDefResource) Rows() []table.Row {
 	return rows
 }
 
+func (r *ECSTaskDefResource) ChildResource(row table.Row) (string, Resource) {
+	family := row[0]
+	revision := 0
+	fmt.Sscanf(row[1], "%d", &revision)
+	return family, NewECSTaskDefDetailResource(family, revision)
+}
+
 func (r *ECSTaskDefResource) Actions(row table.Row) []Action { return nil }
 
 func (r *ECSTaskDefResource) Error() error { return r.err }

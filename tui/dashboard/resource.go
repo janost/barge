@@ -2,6 +2,8 @@
 package dashboard
 
 import (
+	"time"
+
 	bargeaws "github.com/janost/barge/aws"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
@@ -30,6 +32,12 @@ type Drillable interface {
 // that support an alternate drill-down path (e.g. Shift+Enter).
 type SecondaryDrillable interface {
 	SecondaryChildResource(row table.Row) (label string, child Resource)
+}
+
+// Tailable is optionally implemented by Resources that should auto-refresh
+// on their own schedule regardless of the global refresh setting.
+type Tailable interface {
+	TailInterval() time.Duration
 }
 
 // processExitMsg is sent when a subprocess (e.g. SSM shell) completes.

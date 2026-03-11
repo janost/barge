@@ -9,7 +9,8 @@ import (
 
 // Config holds all barge configuration.
 type Config struct {
-	Keybinds Keybinds `yaml:"keybinds"`
+	Keybinds        Keybinds `yaml:"keybinds"`
+	RefreshInterval int      `yaml:"refresh_interval"`
 }
 
 // Keybinds maps actions to key strings (matching tea.KeyMsg.String() values).
@@ -18,6 +19,8 @@ type Keybinds struct {
 	Quit     string `yaml:"quit"`
 	Refresh  string `yaml:"refresh"`
 	DrillAlt string `yaml:"drill_alt"`
+	Sort     string `yaml:"sort"`
+	Actions  string `yaml:"actions"`
 }
 
 // Default returns the default configuration.
@@ -28,6 +31,8 @@ func Default() Config {
 			Quit:     "q",
 			Refresh:  "r",
 			DrillAlt: "T",
+			Sort:     "s",
+			Actions:  "a",
 		},
 	}
 }

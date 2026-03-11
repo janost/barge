@@ -15,17 +15,18 @@ type ecsLogsFetchMsg struct {
 }
 
 type ECSLogsResource struct {
-	cluster string
-	service string
-	events  []bargeaws.LogEvent
-	err     error
+	cluster   string
+	service   string
+	events    []bargeaws.LogEvent
+	err       error
+	lastFetch time.Time
 }
 
 func NewECSLogsResource(cluster, service string) *ECSLogsResource {
 	return &ECSLogsResource{cluster: cluster, service: service}
 }
 
-func (r *ECSLogsResource) Name() string { return "Logs" }
+func (r *ECSLogsResource) Name() string { return "Logs (tailing)" }
 
 func (r *ECSLogsResource) Columns() []Column {
 	return []Column{
@@ -36,13 +37,19 @@ func (r *ECSLogsResource) Columns() []Column {
 }
 
 func (r *ECSLogsResource) FetchCmd(client *bargeaws.Client) tea.Cmd {
+	since := r.lastFetch
+	if since.IsZero() {
+		since = time.Now().Add(-15 * time.Minute)
+	} else {
+		// Nudge forward 1ms to avoid re-fetching the last event (startTime is inclusive)
+		since = since.Add(time.Millisecond)
+	}
 	return func() tea.Msg {
 		ctx := context.Background()
 		logCfg, err := client.ResolveLogConfig(ctx, r.cluster, r.service)
 		if err != nil {
 			return ecsLogsFetchMsg{nil, err}
 		}
-		since := time.Now().Add(-15 * time.Minute)
 		events, _, err := client.FetchLogs(ctx, logCfg.LogGroup, logCfg.StreamPrefix, "", since, nil)
 		return ecsLogsFetchMsg{events, err}
 	}
@@ -52,7 +59,19 @@ func (r *ECSLogsResource) HandleMsg(msg tea.Msg) bool {
 	if m, ok := msg.(ecsLogsFetchMsg); ok {
 		r.err = m.err
 		if m.err == nil {
-			r.events = m.events
+			if r.lastFetch.IsZero() {
+				// Initial fetch — replace
+				r.events = m.events
+			} else {
+				// Tail — append new events
+				r.events = append(r.events, m.events...)
+			}
+			// Cap to prevent unbounded memory growth
+			const maxEvents = 10000
+			if len(r.events) > maxEvents {
+				r.events = r.events[len(r.events)-maxEvents:]
+			}
+			r.lastFetch = time.Now()
 		}
 		return true
 	}
@@ -72,5 +91,9 @@ func (r *ECSLogsResource) Rows() []table.Row {
 }
 
 func (r *ECSLogsResource) Actions(row table.Row) []Action { return nil }
+
+func (r *ECSLogsResource) TailInterval() time.Duration {
+	return 5 * time.Second
+}
 
 func (r *ECSLogsResource) Error() error { return r.err }

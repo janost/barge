@@ -499,6 +499,25 @@ func shortName(arn string) string {
 	return parts[len(parts)-1]
 }
 
+type TaskDefDetail struct {
+	Family      string
+	Revision    int
+	CPU         string
+	Memory      string
+	NetworkMode string
+	Containers  []TaskDefContainerDetail
+}
+
+type TaskDefContainerDetail struct {
+	Name      string
+	Image     string
+	CPU       int32
+	Memory    int32
+	Essential bool
+	PortMaps  string // "80:8080, 443:8443"
+	EnvCount  int    // number of env vars
+}
+
 type TaskDefInfo struct {
 	Family   string
 	Revision int
@@ -539,6 +558,51 @@ func (c *Client) ListTaskDefinitions(ctx context.Context) ([]TaskDefInfo, error)
 	return infos, nil
 }
 
+func (c *Client) DescribeTaskDefinitionDetail(ctx context.Context, family string, revision int) (TaskDefDetail, error) {
+	taskDef := fmt.Sprintf("%s:%d", family, revision)
+	out, err := c.ecs.DescribeTaskDefinition(ctx, &ecs.DescribeTaskDefinitionInput{
+		TaskDefinition: aws.String(taskDef),
+	})
+	if err != nil {
+		return TaskDefDetail{}, fmt.Errorf("describing task definition: %w", err)
+	}
+
+	td := out.TaskDefinition
+	var containers []TaskDefContainerDetail
+	for _, cd := range td.ContainerDefinitions {
+		var ports []string
+		for _, pm := range cd.PortMappings {
+			hp := int32(0)
+			if pm.HostPort != nil {
+				hp = *pm.HostPort
+			}
+			cp := int32(0)
+			if pm.ContainerPort != nil {
+				cp = *pm.ContainerPort
+			}
+			ports = append(ports, fmt.Sprintf("%d:%d", hp, cp))
+		}
+		containers = append(containers, TaskDefContainerDetail{
+			Name:      aws.ToString(cd.Name),
+			Image:     aws.ToString(cd.Image),
+			CPU:       cd.Cpu,
+			Memory:    aws.ToInt32(cd.Memory),
+			Essential: cd.Essential != nil && *cd.Essential,
+			PortMaps:  strings.Join(ports, ", "),
+			EnvCount:  len(cd.Environment),
+		})
+	}
+
+	return TaskDefDetail{
+		Family:      aws.ToString(td.Family),
+		Revision:    int(td.Revision),
+		CPU:         aws.ToString(td.Cpu),
+		Memory:      aws.ToString(td.Memory),
+		NetworkMode: string(td.NetworkMode),
+		Containers:  containers,
+	}, nil
+}
+
 // StopTask stops a running ECS task.
 func (c *Client) StopTask(ctx context.Context, cluster, taskID, reason string) error {
 	_, err := c.ecs.StopTask(ctx, &ecs.StopTaskInput{
@@ -561,6 +625,19 @@ func (c *Client) ForceNewDeployment(ctx context.Context, cluster, service string
 	})
 	if err != nil {
 		return fmt.Errorf("forcing new deployment: %w", err)
+	}
+	return nil
+}
+
+// UpdateServiceDesiredCount changes the desired task count for an ECS service.
+func (c *Client) UpdateServiceDesiredCount(ctx context.Context, cluster, service string, desiredCount int32) error {
+	_, err := c.ecs.UpdateService(ctx, &ecs.UpdateServiceInput{
+		Cluster:      aws.String(cluster),
+		Service:      aws.String(service),
+		DesiredCount: aws.Int32(desiredCount),
+	})
+	if err != nil {
+		return fmt.Errorf("updating desired count: %w", err)
 	}
 	return nil
 }

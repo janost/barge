@@ -13,6 +13,12 @@ type apiResultMsg struct {
 	err     error
 }
 
+// inputRequestMsg asks the model to show an input prompt.
+type inputRequestMsg struct {
+	prompt   string
+	callback func(value string) tea.Cmd
+}
+
 // NewAPIAction creates an action that calls an AWS API and returns a result message.
 func NewAPIAction(name string, fn func() error, successMsg string) Action {
 	return Action{

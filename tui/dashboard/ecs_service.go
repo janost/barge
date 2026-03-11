@@ -27,6 +27,7 @@ type ECSServiceResource struct {
 	services    []bargeaws.ServiceInfo
 	err         error
 	drillTarget serviceDrillTarget
+	client      *bargeaws.Client
 }
 
 func NewECSServiceResource(cluster string) *ECSServiceResource {
@@ -55,6 +56,7 @@ func (r *ECSServiceResource) Columns() []Column {
 }
 
 func (r *ECSServiceResource) FetchCmd(client *bargeaws.Client) tea.Cmd {
+	r.client = client
 	return func() tea.Msg {
 		services, err := client.ListServices(context.Background(), r.cluster)
 		return ecsServiceFetchMsg{services, err}
@@ -87,7 +89,41 @@ func (r *ECSServiceResource) Rows() []table.Row {
 	return rows
 }
 
-func (r *ECSServiceResource) Actions(row table.Row) []Action { return nil }
+func (r *ECSServiceResource) Actions(row table.Row) []Action {
+	if r.client == nil {
+		return nil
+	}
+	serviceName := row[0]
+	cluster := r.cluster
+	client := r.client
+	return []Action{
+		{
+			Name: "Scale Service",
+			Run: func() tea.Cmd {
+				return func() tea.Msg {
+					return inputRequestMsg{
+						prompt: fmt.Sprintf("Scale %s — enter desired count:", serviceName),
+						callback: func(value string) tea.Cmd {
+							var count int32
+							if _, err := fmt.Sscanf(value, "%d", &count); err != nil {
+								return func() tea.Msg {
+									return apiResultMsg{"", fmt.Errorf("invalid number: %s", value)}
+								}
+							}
+							return func() tea.Msg {
+								err := client.UpdateServiceDesiredCount(context.Background(), cluster, serviceName, count)
+								if err != nil {
+									return apiResultMsg{"", err}
+								}
+								return apiResultMsg{fmt.Sprintf("Scaled %s to %d", serviceName, count), nil}
+							}
+						},
+					}
+				}
+			},
+		},
+	}
+}
 
 func (r *ECSServiceResource) Error() error { return r.err }
 
