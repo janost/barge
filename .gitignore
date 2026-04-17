@@ -1,0 +1,26 @@
+# Binary
+bridge
+
+# Build output
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test
+cover.out
+
+# Docs and tasks (local only)
+docs/
+tasks/
+
+# Claude Code working dir
+.claude/

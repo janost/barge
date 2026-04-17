@@ -1,0 +1,50 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Config holds all bridge configuration.
+type Config struct {
+	Keybinds        Keybinds `yaml:"keybinds"`
+	RefreshInterval int      `yaml:"refresh_interval"`
+}
+
+// Keybinds maps actions to key strings (matching tea.KeyMsg.String() values).
+type Keybinds struct {
+	Search   string `yaml:"search"`
+	Quit     string `yaml:"quit"`
+	Refresh  string `yaml:"refresh"`
+	DrillAlt string `yaml:"drill_alt"`
+	Sort     string `yaml:"sort"`
+	Actions  string `yaml:"actions"`
+}
+
+// Default returns the default configuration.
+func Default() Config {
+	return Config{
+		Keybinds: Keybinds{
+			Search:   "/",
+			Quit:     "q",
+			Refresh:  "r",
+			DrillAlt: "T",
+			Sort:     "s",
+			Actions:  "a",
+		},
+	}
+}
+
+// Load reads configuration from ~/.config/bridge/config.yaml,
+// falling back to defaults for any unspecified fields.
+func Load() Config {
+	cfg := Default()
+	data, err := os.ReadFile(filepath.Join(ConfigDir(), "config.yaml"))
+	if err != nil {
+		return cfg
+	}
+	_ = yaml.Unmarshal(data, &cfg)
+	return cfg
+}

@@ -1,0 +1,105 @@
+package dashboard
+
+import (
+	"context"
+	"fmt"
+
+	bridgeaws "github.com/janost/bridge/aws"
+	"github.com/charmbracelet/bubbles/table"
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+type ecsClusterFetchMsg struct {
+	clusters []bridgeaws.ClusterInfo
+	err      error
+}
+
+type clusterDrillTarget int
+
+const (
+	clusterDrillToServices clusterDrillTarget = iota
+	clusterDrillToStatus
+	clusterDrillToLogs
+)
+
+type ECSClusterResource struct {
+	clusters    []bridgeaws.ClusterInfo
+	err         error
+	drillTarget clusterDrillTarget
+}
+
+func NewECSClusterResource() *ECSClusterResource {
+	return &ECSClusterResource{}
+}
+
+func NewECSClusterResourceForStatus() *ECSClusterResource {
+	return &ECSClusterResource{drillTarget: clusterDrillToStatus}
+}
+
+func NewECSClusterResourceForLogs() *ECSClusterResource {
+	return &ECSClusterResource{drillTarget: clusterDrillToLogs}
+}
+
+func (r *ECSClusterResource) Name() string { return "ECS Clusters" }
+
+func (r *ECSClusterResource) Columns() []Column {
+	return []Column{
+		{"NAME", 30},
+		{"STATUS", 10},
+		{"SERVICES", 10},
+		{"RUNNING", 10},
+		{"PENDING", 10},
+	}
+}
+
+func (r *ECSClusterResource) FetchCmd(client *bridgeaws.Client) tea.Cmd {
+	return func() tea.Msg {
+		clusters, err := client.ListClustersDetail(context.Background())
+		return ecsClusterFetchMsg{clusters, err}
+	}
+}
+
+func (r *ECSClusterResource) HandleMsg(msg tea.Msg) bool {
+	if m, ok := msg.(ecsClusterFetchMsg); ok {
+		r.err = m.err
+		if m.err == nil {
+			r.clusters = m.clusters
+		}
+		return true
+	}
+	return false
+}
+
+func (r *ECSClusterResource) Rows() []table.Row {
+	rows := make([]table.Row, len(r.clusters))
+	for i, cl := range r.clusters {
+		rows[i] = table.Row{
+			cl.Name,
+			cl.Status,
+			fmt.Sprintf("%d", cl.ActiveServices),
+			fmt.Sprintf("%d", cl.RunningTasks),
+			fmt.Sprintf("%d", cl.PendingTasks),
+		}
+	}
+	return rows
+}
+
+func (r *ECSClusterResource) Actions(row table.Row) []Action { return nil }
+
+func (r *ECSClusterResource) Error() error { return r.err }
+
+func (r *ECSClusterResource) ChildResource(row table.Row) (string, Resource) {
+	switch r.drillTarget {
+	case clusterDrillToStatus:
+		return row[0], NewECSServiceResourceForStatus(row[0])
+	case clusterDrillToLogs:
+		return row[0], NewECSServiceResourceForLogs(row[0])
+	default:
+		return row[0], NewECSServiceResource(row[0])
+	}
+}
+
+// SecondaryChildResource drills into all tasks on the cluster (including standalone tasks).
+func (r *ECSClusterResource) SecondaryChildResource(row table.Row) (string, Resource) {
+	return row[0], NewECSTaskResource(row[0], "")
+}

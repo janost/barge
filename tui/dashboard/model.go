@@ -1,0 +1,712 @@
+// tui/dashboard/model.go
+package dashboard
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+
+	bridgeaws "github.com/janost/bridge/aws"
+	"github.com/janost/bridge/config"
+	"github.com/charmbracelet/bubbles/table"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+)
+
+type autoRefreshMsg struct{}
+
+type state int
+
+const (
+	stateLoading state = iota
+	stateTable
+	stateActions
+	stateInput
+)
+
+// Model is the main dashboard Bubble Tea model.
+type Model struct {
+	client          *bridgeaws.Client
+	resourceStack   []Resource
+	breadcrumbs     []string
+	breadcrumbMarks []int // breadcrumb length before each drill-down
+	table           table.Model
+	baseColumns     []Column
+	state           state
+
+	// Action menu
+	actions   []Action
+	actionIdx int
+
+	// Input prompt
+	inputPrompt   string
+	inputValue    string
+	inputCallback func(value string) tea.Cmd
+
+	// Layout
+	width  int
+	height int
+
+	// Search
+	searching   bool
+	searchQuery string
+
+	// Sorting
+	sortCol int  // -1 means no sort active
+	sortAsc bool
+
+	// Status
+	message string
+
+	// Config
+	config config.Config
+
+	// Auto-refresh
+	refreshInterval time.Duration
+}
+
+func (m *Model) currentResource() Resource {
+	return m.resourceStack[len(m.resourceStack)-1]
+}
+
+// New creates a new dashboard model with the given resource.
+func New(client *bridgeaws.Client, resource Resource, cfg config.Config) Model {
+	columns := resource.Columns()
+	tableCols := make([]table.Column, len(columns))
+	for i, c := range columns {
+		tableCols[i] = table.Column{Title: c.Title, Width: c.Width}
+	}
+
+	t := table.New(
+		table.WithColumns(tableCols),
+		table.WithRows([]table.Row{}),
+		table.WithFocused(true),
+		table.WithHeight(20),
+	)
+	t.SetStyles(tableStyles())
+
+	var refreshInterval time.Duration
+	if cfg.RefreshInterval > 0 {
+		refreshInterval = time.Duration(cfg.RefreshInterval) * time.Second
+	}
+
+	return Model{
+		client:          client,
+		resourceStack:   []Resource{resource},
+		breadcrumbs:     []string{resource.Name()},
+		baseColumns:     columns,
+		table:           t,
+		state:           stateLoading,
+		sortCol:         -1,
+		sortAsc:         true,
+		config:          cfg,
+		refreshInterval: refreshInterval,
+	}
+}
+
+// resizeColumns distributes the terminal width across table columns proportionally.
+func (m *Model) resizeColumns() {
+	if m.width <= 0 || len(m.baseColumns) == 0 {
+		return
+	}
+	totalBase := 0
+	for _, c := range m.baseColumns {
+		totalBase += c.Width
+	}
+	available := m.width - 2 // subtract border chars
+	cols := make([]table.Column, len(m.baseColumns))
+	remaining := available
+	for i, c := range m.baseColumns {
+		if i == len(m.baseColumns)-1 {
+			cols[i] = table.Column{Title: c.Title, Width: remaining}
+		} else {
+			w := available * c.Width / totalBase
+			cols[i] = table.Column{Title: c.Title, Width: w}
+			remaining -= w
+		}
+	}
+	m.table.SetColumns(cols)
+}
+
+func (m *Model) drillDown(label string, child Resource) {
+	m.breadcrumbMarks = append(m.breadcrumbMarks, len(m.breadcrumbs))
+	m.breadcrumbs = append(m.breadcrumbs, label)
+	if child.Name() != label {
+		m.breadcrumbs = append(m.breadcrumbs, child.Name())
+	}
+	m.resourceStack = append(m.resourceStack, child)
+	m.reconfigureTable(child)
+	m.searchQuery = ""
+	m.sortCol = -1
+	m.sortAsc = true
+	m.state = stateLoading
+}
+
+func (m *Model) drillBack() {
+	mark := m.breadcrumbMarks[len(m.breadcrumbMarks)-1]
+	m.breadcrumbMarks = m.breadcrumbMarks[:len(m.breadcrumbMarks)-1]
+	m.breadcrumbs = m.breadcrumbs[:mark]
+	m.resourceStack = m.resourceStack[:len(m.resourceStack)-1]
+	parent := m.currentResource()
+	m.reconfigureTable(parent)
+	m.table.SetRows(parent.Rows())
+	m.sortCol = -1
+	m.sortAsc = true
+	m.state = stateTable
+	m.message = ""
+}
+
+func (m *Model) reconfigureTable(res Resource) {
+	columns := res.Columns()
+	m.baseColumns = columns
+	tableCols := make([]table.Column, len(columns))
+	for i, c := range columns {
+		tableCols[i] = table.Column{Title: c.Title, Width: c.Width}
+	}
+	m.table.SetRows([]table.Row{}) // clear rows before changing column count
+	m.table.SetColumns(tableCols)
+	m.resizeColumns()
+}
+
+type tailTickMsg struct{}
+
+func (m *Model) scheduleTail() tea.Cmd {
+	if t, ok := m.currentResource().(Tailable); ok {
+		return tea.Tick(t.TailInterval(), func(time.Time) tea.Msg {
+			return tailTickMsg{}
+		})
+	}
+	return nil
+}
+
+func (m *Model) scheduleRefresh() tea.Cmd {
+	if m.refreshInterval <= 0 {
+		return nil
+	}
+	return tea.Tick(m.refreshInterval, func(t time.Time) tea.Msg {
+		return autoRefreshMsg{}
+	})
+}
+
+func (m Model) Init() tea.Cmd {
+	return tea.Batch(
+		m.currentResource().FetchCmd(m.client),
+		m.scheduleRefresh(),
+		m.scheduleTail(),
+	)
+}
+
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		// 2 for top/bottom border, 1 for table header, 1 for status bar
+		m.table.SetHeight(msg.Height - 4)
+		m.resizeColumns()
+		return m, nil
+
+	case processExitMsg:
+		m.state = stateTable
+		if msg.err != nil {
+			m.message = fmt.Sprintf("Process error: %v", msg.err)
+		} else {
+			m.message = "Session ended."
+		}
+		return m, m.currentResource().FetchCmd(m.client)
+
+	case apiResultMsg:
+		m.state = stateTable
+		if msg.err != nil {
+			m.message = fmt.Sprintf("Error: %v", msg.err)
+		} else {
+			m.message = msg.message
+		}
+		return m, m.currentResource().FetchCmd(m.client)
+
+	case inputRequestMsg:
+		m.state = stateInput
+		m.inputPrompt = msg.prompt
+		m.inputValue = ""
+		m.inputCallback = msg.callback
+		return m, nil
+
+	case autoRefreshMsg:
+		if m.state == stateTable || m.state == stateLoading {
+			return m, tea.Batch(
+				m.currentResource().FetchCmd(m.client),
+				m.scheduleRefresh(),
+			)
+		}
+		// Reschedule even in actions state, but don't fetch
+		return m, m.scheduleRefresh()
+
+	case tailTickMsg:
+		if m.state == stateTable || m.state == stateLoading {
+			return m, tea.Batch(
+				m.currentResource().FetchCmd(m.client),
+				m.scheduleTail(),
+			)
+		}
+		return m, m.scheduleTail()
+
+	case tea.KeyMsg:
+		switch m.state {
+		case stateLoading:
+			if msg.String() == "q" || msg.String() == "ctrl+c" {
+				return m, tea.Quit
+			}
+		case stateTable:
+			return m.updateTable(msg)
+		case stateActions:
+			return m.updateActions(msg)
+		case stateInput:
+			return m.updateInput(msg)
+		}
+	}
+
+	// Let resource handle data messages
+	if m.currentResource().HandleMsg(msg) {
+		m.table.SetRows(m.currentResource().Rows())
+		m.applySearch() // preserve active search filter
+		m.state = stateTable
+		m.message = ""
+		return m, nil
+	}
+
+	// Pass through to table for cursor movement etc.
+	var cmd tea.Cmd
+	m.table, cmd = m.table.Update(msg)
+	return m, cmd
+}
+
+func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.searching {
+		return m.updateSearch(msg)
+	}
+
+	key := msg.String()
+	switch {
+	case key == "ctrl+c":
+		return m, tea.Quit
+	case key == m.config.Keybinds.Quit:
+		return m, tea.Quit
+	case key == m.config.Keybinds.Search:
+		m.searching = true
+		return m, nil
+	case key == m.config.Keybinds.DrillAlt:
+		row := m.table.SelectedRow()
+		if row == nil {
+			return m, nil
+		}
+		if sd, ok := m.currentResource().(SecondaryDrillable); ok {
+			label, child := sd.SecondaryChildResource(row)
+			m.drillDown(label, child)
+			return m, tea.Batch(child.FetchCmd(m.client), m.scheduleTail())
+		}
+		return m, nil
+	case key == "enter":
+		row := m.table.SelectedRow()
+		if row == nil {
+			return m, nil
+		}
+		if drillable, ok := m.currentResource().(Drillable); ok {
+			label, child := drillable.ChildResource(row)
+			m.drillDown(label, child)
+			return m, tea.Batch(child.FetchCmd(m.client), m.scheduleTail())
+		}
+		m.actions = m.currentResource().Actions(row)
+		m.actionIdx = 0
+		m.state = stateActions
+		return m, nil
+	case key == "esc" || key == "backspace":
+		if m.searchQuery != "" {
+			m.searchQuery = ""
+			m.applySearch()
+			return m, nil
+		}
+		if len(m.resourceStack) > 1 {
+			m.drillBack()
+			return m, nil
+		}
+		return m, nil
+	case key == m.config.Keybinds.Sort:
+		if m.sortCol == -1 {
+			// First press: sort by first column ascending
+			m.sortCol = 0
+			m.sortAsc = true
+		} else {
+			if m.sortAsc {
+				// Second press on same: reverse
+				m.sortAsc = false
+			} else {
+				// Third press: move to next column
+				m.sortCol++
+				m.sortAsc = true
+				if m.sortCol >= len(m.baseColumns) {
+					// Wrap around disables sort
+					m.sortCol = -1
+				}
+			}
+		}
+		m.applySortAndSearch()
+		return m, nil
+	case key == m.config.Keybinds.Actions:
+		row := m.table.SelectedRow()
+		if row == nil {
+			return m, nil
+		}
+		actions := m.currentResource().Actions(row)
+		if len(actions) == 0 {
+			return m, nil
+		}
+		m.actions = actions
+		m.actionIdx = 0
+		m.state = stateActions
+		return m, nil
+	case key == m.config.Keybinds.Refresh:
+		m.state = stateLoading
+		m.message = ""
+		m.searchQuery = ""
+		return m, m.currentResource().FetchCmd(m.client)
+	}
+
+	var cmd tea.Cmd
+	m.table, cmd = m.table.Update(msg)
+	return m, cmd
+}
+
+func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "esc":
+		m.searching = false
+		m.searchQuery = ""
+		m.applySearch()
+		return m, nil
+	case "enter":
+		m.searching = false
+		return m, nil
+	case "backspace":
+		if len(m.searchQuery) > 0 {
+			m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
+			m.applySearch()
+		}
+		return m, nil
+	case "ctrl+c":
+		return m, tea.Quit
+	case "up", "down":
+		var cmd tea.Cmd
+		m.table, cmd = m.table.Update(msg)
+		return m, cmd
+	default:
+		if len(key) == 1 {
+			m.searchQuery += key
+			m.applySearch()
+		}
+		return m, nil
+	}
+}
+
+func (m *Model) applySearch() {
+	m.applySortAndSearch()
+}
+
+func (m *Model) applySortAndSearch() {
+	rows := m.currentResource().Rows()
+
+	// Apply search filter first
+	if m.searchQuery != "" {
+		terms := strings.Fields(m.searchQuery)
+		var filtered []table.Row
+		for _, row := range rows {
+			target := strings.ToLower(strings.Join(row, " "))
+			match := true
+			for _, term := range terms {
+				if !strings.Contains(target, strings.ToLower(term)) {
+					match = false
+					break
+				}
+			}
+			if match {
+				filtered = append(filtered, row)
+			}
+		}
+		rows = filtered
+	}
+
+	// Apply sort
+	if m.sortCol >= 0 && m.sortCol < len(m.baseColumns) {
+		col := m.sortCol
+		asc := m.sortAsc
+		sort.SliceStable(rows, func(i, j int) bool {
+			if asc {
+				return rows[i][col] < rows[j][col]
+			}
+			return rows[i][col] > rows[j][col]
+		})
+	}
+
+	m.table.SetRows(rows)
+}
+
+func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "esc":
+		m.state = stateTable
+		return m, nil
+	case "enter":
+		m.state = stateTable
+		if m.inputCallback != nil && m.inputValue != "" {
+			return m, m.inputCallback(m.inputValue)
+		}
+		return m, nil
+	case "backspace":
+		if len(m.inputValue) > 0 {
+			m.inputValue = m.inputValue[:len(m.inputValue)-1]
+		}
+		return m, nil
+	case "ctrl+c":
+		return m, tea.Quit
+	default:
+		if len(key) == 1 && key[0] >= '0' && key[0] <= '9' {
+			m.inputValue += key
+		}
+		return m, nil
+	}
+}
+
+func (m Model) updateActions(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q":
+		m.state = stateTable
+		return m, nil
+	case "enter":
+		if m.actionIdx < len(m.actions) {
+			return m, m.actions[m.actionIdx].Run()
+		}
+		return m, nil
+	case "up", "k":
+		if m.actionIdx > 0 {
+			m.actionIdx--
+		}
+		return m, nil
+	case "down", "j":
+		if m.actionIdx < len(m.actions)-1 {
+			m.actionIdx++
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m Model) renderBreadcrumb() string {
+	parts := make([]string, len(m.breadcrumbs))
+	for i, b := range m.breadcrumbs {
+		if i == len(m.breadcrumbs)-1 {
+			parts[i] = resourceStyle.Render(b)
+		} else {
+			parts[i] = countStyle.Render(b)
+		}
+	}
+	return strings.Join(parts, sepStyle.Render(" ▸ "))
+}
+
+func (m Model) renderBorderedPanel(title, content, shortcuts string) string {
+	border := lipgloss.RoundedBorder()
+	bStyle := lipgloss.NewStyle().Foreground(borderFg)
+	w := m.width
+	if w < 4 {
+		return content
+	}
+
+	// Top line: ╭─ Title ──────────────────╮
+	titleRendered := " " + title + " "
+	titleWidth := lipgloss.Width(titleRendered)
+	topFill := w - titleWidth - 3 // 2 corners + 1 leading border char
+	if topFill < 0 {
+		topFill = 0
+	}
+	topLine := bStyle.Render(border.TopLeft) +
+		bStyle.Render(border.Top) +
+		titleRendered +
+		bStyle.Render(strings.Repeat(border.Top, topFill)) +
+		bStyle.Render(border.TopRight)
+
+	// Content lines: │ content │
+	contentLines := strings.Split(content, "\n")
+	innerWidth := w - 2 // 2 for side border chars
+	var body strings.Builder
+	for _, line := range contentLines {
+		lineWidth := lipgloss.Width(line)
+		pad := innerWidth - lineWidth
+		if pad < 0 {
+			pad = 0
+		}
+		body.WriteString(
+			bStyle.Render(border.Left) +
+				line + strings.Repeat(" ", pad) +
+				bStyle.Render(border.Right) + "\n")
+	}
+
+	// Bottom line: ╰─ shortcuts ──────────────╯
+	shortRendered := " " + shortcuts + " "
+	shortWidth := lipgloss.Width(shortRendered)
+	botFill := w - shortWidth - 3 // 2 corners + 1 leading border char
+	if botFill < 0 {
+		botFill = 0
+	}
+	botLine := bStyle.Render(border.BottomLeft) +
+		bStyle.Render(border.Bottom) +
+		shortRendered +
+		bStyle.Render(strings.Repeat(border.Bottom, botFill)) +
+		bStyle.Render(border.BottomRight)
+
+	return topLine + "\n" + body.String() + botLine
+}
+
+func (m Model) View() string {
+	// Build breadcrumb title
+	title := m.renderBreadcrumb()
+	if m.state == stateActions {
+		row := m.table.SelectedRow()
+		if row != nil {
+			title += sepStyle.Render(" ▸ ") + selectedStyle.Render(row[0])
+		}
+	} else {
+		count := len(m.table.Rows())
+		title += "  " + countStyle.Render(fmt.Sprintf("[%d]", count))
+		if m.sortCol >= 0 && m.sortCol < len(m.baseColumns) {
+			arrow := "↑"
+			if !m.sortAsc {
+				arrow = "↓"
+			}
+			title += "  " + countStyle.Render(m.baseColumns[m.sortCol].Title+arrow)
+		}
+	}
+
+	// Build shortcuts
+	var shortcuts string
+	if m.searching {
+		cursor := "█"
+		shortcuts = searchStyle.Render(m.config.Keybinds.Search+" "+m.searchQuery+cursor) +
+			"  " + shortcutStyle.Render("Enter:Keep  Esc:Clear")
+	} else if m.state == stateActions {
+		shortcuts = shortcutStyle.Render("Enter:Select  Esc:Back")
+	} else {
+		var parts []string
+		parts = append(parts, "↑↓:Navigate", "Enter:Select")
+		if len(m.resourceStack) > 1 {
+			parts = append(parts, "Esc:Back")
+		}
+		if _, ok := m.currentResource().(SecondaryDrillable); ok {
+			parts = append(parts, m.config.Keybinds.DrillAlt+":Alt-Drill")
+		}
+		if row := m.table.SelectedRow(); row != nil {
+			actions := m.currentResource().Actions(row)
+			if len(actions) > 0 {
+				parts = append(parts, m.config.Keybinds.Actions+":Actions")
+			}
+		}
+		parts = append(parts,
+			m.config.Keybinds.Sort+":Sort",
+			m.config.Keybinds.Search+":Search",
+			m.config.Keybinds.Refresh+":Refresh",
+			m.config.Keybinds.Quit+":Quit",
+		)
+		if m.refreshInterval > 0 {
+			parts = append(parts, fmt.Sprintf("⟳%ds", int(m.refreshInterval.Seconds())))
+		}
+		nav := strings.Join(parts, "  ")
+		if m.searchQuery != "" {
+			shortcuts = searchStyle.Render("["+m.searchQuery+"]") + "  " + shortcutStyle.Render(nav)
+		} else {
+			shortcuts = shortcutStyle.Render(nav)
+		}
+	}
+
+	// Build inner content
+	var content string
+	switch m.state {
+	case stateLoading:
+		content = statusStyle.Render("Loading...")
+	case stateActions:
+		bg := m.table.View()
+		popup := m.renderActionPopup()
+		bgH := strings.Count(bg, "\n") + 1
+		content = overlayCenter(bg, popup, m.width-2, bgH)
+	case stateInput:
+		bg := m.table.View()
+		popup := m.renderInputPopup()
+		bgH := strings.Count(bg, "\n") + 1
+		content = overlayCenter(bg, popup, m.width-2, bgH)
+	default:
+		if err := m.currentResource().Error(); err != nil {
+			content = errorStyle.Render("Error: " + err.Error())
+		} else {
+			content = m.table.View()
+		}
+	}
+
+	// Render bordered panel
+	panel := m.renderBorderedPanel(title, content, shortcuts)
+
+	// Status bar below
+	if m.message != "" {
+		panel += "\n" + statusStyle.Render(" "+m.message)
+	}
+
+	return panel
+}
+
+func overlayCenter(bg, fg string, bgW, bgH int) string {
+	bgLines := strings.Split(bg, "\n")
+	fgLines := strings.Split(fg, "\n")
+
+	fgW := lipgloss.Width(fg)
+	fgH := len(fgLines)
+
+	x := max((bgW-fgW)/2, 0)
+	y := max((bgH-fgH)/2, 0)
+
+	for i, fgLine := range fgLines {
+		row := y + i
+		if row >= len(bgLines) {
+			break
+		}
+		left := ansi.Truncate(bgLines[row], x, "")
+		leftW := lipgloss.Width(left)
+		if leftW < x {
+			left += strings.Repeat(" ", x-leftW)
+		}
+		right := ansi.TruncateLeft(bgLines[row], x+lipgloss.Width(fgLine), "")
+		bgLines[row] = left + "\x1b[m" + fgLine + "\x1b[m" + right
+	}
+
+	return strings.Join(bgLines, "\n")
+}
+
+func (m Model) renderInputPopup() string {
+	cursor := "█"
+	text := m.inputPrompt + "\n\n  " + m.inputValue + cursor + "\n\n" +
+		shortcutStyle.Render("Enter:Confirm  Esc:Cancel")
+	return popupStyle.Render(text)
+}
+
+func (m Model) renderActionPopup() string {
+	var b strings.Builder
+	for i, action := range m.actions {
+		if i == m.actionIdx {
+			b.WriteString(actionCursorStyle.Render("▸ " + action.Name))
+		} else {
+			b.WriteString(actionNormalStyle.Render("  " + action.Name))
+		}
+		if i < len(m.actions)-1 {
+			b.WriteString("\n")
+		}
+	}
+	return popupStyle.Render(b.String())
+}
